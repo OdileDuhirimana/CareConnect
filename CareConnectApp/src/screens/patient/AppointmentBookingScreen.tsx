@@ -15,11 +15,13 @@ import { Calendar } from 'react-native-calendars';
 import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { Doctor, Appointment } from '../../types';
+import { useAuth } from '../../context/AuthContext';
 
 const { width } = Dimensions.get('window');
 
 const AppointmentBookingScreen = ({ navigation, route }: any) => {
   const { doctor } = route.params;
+  const { user } = useAuth();
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
   const [appointmentType, setAppointmentType] = useState<'in-person' | 'video'>('video');
@@ -70,7 +72,7 @@ const AppointmentBookingScreen = ({ navigation, route }: any) => {
     setLoading(true);
     try {
       const appointmentData: Omit<Appointment, 'id'> = {
-        patientId: 'current-user-id', // This should come from auth context
+        patientId: user?.id ?? '',
         doctorId: doctor.id,
         date: new Date(selectedDate),
         time: selectedTime,

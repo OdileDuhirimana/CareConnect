@@ -13,9 +13,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { collection, addDoc, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { Message } from '../../types';
+import { useAuth } from '../../context/AuthContext';
 
 const ChatScreen = ({ navigation, route }: any) => {
   const { appointment } = route.params;
+  const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -47,7 +49,7 @@ const ChatScreen = ({ navigation, route }: any) => {
     setLoading(true);
     try {
       await addDoc(collection(db, 'messages'), {
-        senderId: 'current-user-id', // This should come from auth context
+        senderId: user?.id,
         receiverId: appointment.doctorId,
         appointmentId: appointment.id,
         content: newMessage.trim(),
@@ -65,7 +67,7 @@ const ChatScreen = ({ navigation, route }: any) => {
   };
 
   const renderMessage = ({ item }: { item: Message }) => {
-    const isCurrentUser = item.senderId === 'current-user-id'; // This should come from auth context
+    const isCurrentUser = item.senderId === user?.id;
     
     return (
       <View style={[
