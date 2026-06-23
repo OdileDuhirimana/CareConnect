@@ -44,12 +44,12 @@ const ChatScreen = ({ navigation, route }: any) => {
   }, [appointment.id]);
 
   const sendMessage = async () => {
-    if (!newMessage.trim()) return;
+    if (!newMessage.trim() || !user?.id) return;
 
     setLoading(true);
     try {
       await addDoc(collection(db, 'messages'), {
-        senderId: user?.id,
+        senderId: user.id,
         receiverId: appointment.doctorId,
         appointmentId: appointment.id,
         content: newMessage.trim(),
