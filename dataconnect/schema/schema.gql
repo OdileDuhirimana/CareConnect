@@ -1,0 +1,52 @@
+type User @table {
+  displayName: String!
+  email: String!
+  createdAt: Timestamp!
+  dateOfBirth: Date
+  gender: String
+  photoUrl: String
+  phoneNumber: String
+}
+
+type Doctor @table {
+  name: String!
+  specialty: String!
+  clinicAddress: String!
+  phoneNumber: String!
+  createdAt: Timestamp!
+  email: String
+  bio: String
+  profilePictureUrl: String
+  rating: Float
+}
+
+type Appointment @table {
+  user: User!
+  doctor: Doctor!
+  appointmentDate: Date!
+  appointmentTime: String!
+  status: String!
+  createdAt: Timestamp!
+  notes: String
+  reasonForVisit: String
+}
+
+type MedicalRecord @table {
+  user: User!
+  recordType: String!
+  uploadDate: Date!
+  fileUrl: String!
+  recordName: String
+  description: String
+  doctorName: String
+}
+
+type WellnessMetric @table {
+  user: User!
+  metricName: String!
+  value: String!
+  measurementDate: Date!
+  createdAt: Timestamp!
+  unit: String
+  notes: String
+}
