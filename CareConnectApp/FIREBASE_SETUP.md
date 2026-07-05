@@ -46,6 +46,8 @@ const firebaseConfig = {
 };
 ```
 
+> **Note:** The steps below describe how to configure a Firebase project from scratch via the console. The actual, up-to-date `firestore.rules` and `storage.rules` files are checked into the repository root and already implement the ownership model described here — deploy those files directly (`firebase deploy --only firestore:rules,storage:rules`) rather than hand-copying rules from this guide, which may drift out of sync with the real files over time.
+
 ## 🔐 Step 3: Enable Authentication
 
 ### 3.1 Go to Authentication
@@ -116,12 +118,9 @@ service cloud.firestore {
         resource.data.userId == request.auth.uid;
     }
     
-    // Public collections (doctors, pharmacies)
-    match /doctors/{doctorId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == doctorId;
-    }
-    
+    // Doctor profiles live in the `users` collection (role: 'doctor'),
+    // not a separate `doctors` collection — see the `users` rule above.
+
     match /pharmacies/{pharmacyId} {
       allow read: if request.auth != null;
     }
@@ -231,38 +230,30 @@ npm install
 
 ## 📊 Step 9: Set Up Initial Data Structure
 
-### 9.1 Create Collections
-In Firestore, create these collections:
+### 9.1 Collections Firestore Creates Automatically
+You do not need to manually create collections — Firestore creates a collection the first time a document is written to it. The collections this app actually uses are:
 
-1. **users** - User profiles
+1. **users** - Patient, doctor, and admin profiles (a doctor is a `users` document with `role: "doctor"`, not a separate collection)
 2. **appointments** - Appointment bookings
 3. **messages** - Chat messages
 4. **medical_records** - Medical documents
 5. **wellness_entries** - Wellness tracking
-6. **doctors** - Doctor profiles
-7. **pharmacies** - Pharmacy information
-8. **payments** - Payment records
-9. **notifications** - Push notifications
+6. **pharmacies** - Pharmacy information
 
-### 9.2 Add Sample Data
-Add some sample doctors to get started:
+`payments`, `notifications`, and `prescription_refills` have security rules already provisioned (see `firestore.rules`) and TypeScript types defined, but no screen currently reads/writes them — see `project.md`'s "Known Limitations".
+
+### 9.2 Add a Sample Doctor Account
+The fastest way to get a doctor into the directory is to register normally through the app's sign-up screen with role "Doctor", then manually flip two fields on that user's document in the Firestore console (since a real admin-approval flow requires an existing admin account to call `approveDoctorRequest`):
 
 ```javascript
-// Sample doctor document
+// On users/{that-doctor's-uid}
 {
-  name: "Dr. Sarah Johnson",
-  email: "sarah.johnson@example.com",
-  specialty: "Cardiology",
-  hospital: "City General Hospital",
-  rating: 4.8,
-  experience: 10,
-  consultationFee: 150,
   isApproved: true,
-  role: "doctor",
-  createdAt: new Date(),
-  updatedAt: new Date()
+  isVerified: true
 }
 ```
+
+For a from-scratch project, the very first admin account must also be created this way — set `role: "admin"` directly in the console for one user, since `firestore.rules` intentionally disallows any client from self-registering as `admin`.
 
 ## 🚀 Step 10: Deploy and Test
 
@@ -279,11 +270,11 @@ npm start
 
 ## 🔒 Security Best Practices
 
-1. **Never expose API keys** in client-side code
-2. **Use environment variables** for sensitive data
-3. **Implement proper Firestore rules**
-4. **Enable App Check** for production
-5. **Monitor usage** and set up alerts
+1. **Never expose API keys** in client-side code — done: Firebase web config is public-by-design (it identifies the project, it isn't a secret), but the Gemini API key is a Cloud Functions secret, never a client env var.
+2. **Use environment variables** for sensitive data — done: see `env.example`/`.env`.
+3. **Implement proper Firestore rules** — done: see `firestore.rules` and `storage.rules` at the repo root.
+4. **Enable App Check** for production — not yet done; recommended before any real deployment to prevent abuse of the callable Cloud Functions from outside the app.
+5. **Monitor usage** and set up alerts — not yet done; no Cloud Monitoring/Crashlytics is wired up (see `project.md`'s "Known Limitations").
 
 ## 🆘 Troubleshooting
 
@@ -317,5 +308,33 @@ The CareConnect app should now be able to:
 - ✅ Upload files to Storage
 - ✅ Send push notifications
 - ✅ Handle real-time updates
+
+## Additional Setup (Security Remediation Pass)
+
+The steps above cover the base Firebase project. This project also now includes several server-side pieces that need their own one-time setup before they'll function against a real project (see `project.md`'s "Security Model" section for why each exists):
+
+1. **Cloud Functions secrets**, beyond the Gemini key already covered above:
+   ```bash
+   cd functions
+   firebase functions:secrets:set STRIPE_SECRET_KEY
+   firebase functions:secrets:set STRIPE_WEBHOOK_SECRET
+   ```
+   Also set `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY` in `CareConnectApp/.env` (see `env.example`) — this one *is* safe to ship client-side, since Stripe publishable keys are designed to be public.
+
+2. **Deploy the `syncUserClaims` Firestore trigger** (part of the normal `firebase deploy --only functions` — no separate step), then run the one-time backfill for any users created *before* this trigger existed:
+   ```bash
+   cd functions
+   npx tsx scripts/backfillCustomClaims.ts
+   ```
+   This requires Admin SDK credentials for your project (see https://firebase.google.com/docs/admin/setup) — it has not been run against a live project in the development/audit environment this codebase was authored in.
+
+3. **Firestore/Storage security-rules integration tests** (recommended before trusting a rules change): requires the Firebase CLI (`npm install -g firebase-tools`) and a JDK (11+; the CLI will warn if it's below the version it prefers):
+   ```bash
+   cd functions
+   npm run test:rules:local
+   ```
+   This spins up a real local Firestore + Storage emulator, runs the tests in `src/__tests__/rules/`, and tears the emulator down — no live Firebase project or credentials required (it uses the `demo-careconnect` offline demo project id configured in `.firebaserc`).
+
+4. **Stripe webhook** (for `stripeWebhook` in `functions/src/payments.ts` to actually update payment statuses): configure a webhook endpoint in the Stripe Dashboard pointing at your deployed function's URL, subscribed to `payment_intent.succeeded` and `payment_intent.payment_failed`, and copy the signing secret into `STRIPE_WEBHOOK_SECRET` above. This has not been configured/tested against a real Stripe account in this project's history.
 
 
