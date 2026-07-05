@@ -18,6 +18,7 @@ export {createAppointment} from "./appointments";
 export {createWellnessEntry} from "./wellness";
 export {sendMessage} from "./messages";
 export {syncUserClaims} from "./customClaims";
+export {createPaymentIntent, stripeWebhook} from "./payments";
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript

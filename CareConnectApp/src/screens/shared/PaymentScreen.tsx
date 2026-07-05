@@ -1,77 +1,105 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Alert,
-  TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StackScreenProps } from '@react-navigation/stack';
+import { useStripe } from '@stripe/stripe-react-native';
+import { createPaymentIntent, ServiceError } from '../../services';
+import { RootStackParamList } from '../../navigation/types';
+import { ErrorBanner } from '../../components';
 
-const PaymentScreen = ({ navigation, route }: any) => {
+/**
+ * Real Stripe PaymentSheet integration, replacing the previous screen's
+ * fake `setTimeout` "Payment Successful" flow and hand-rolled raw
+ * card-number/CVV `TextInput` fields (which were never wired to the
+ * Stripe API despite `@stripe/stripe-react-native` being a listed
+ * dependency — see the code review's payments finding).
+ *
+ * Flow: on mount, ask the server (`createPaymentIntent`) to create a
+ * Stripe PaymentIntent for this appointment and initialize the payment
+ * sheet with the returned client secret. Once that's ready, "Pay Now"
+ * simply presents Stripe's own PaymentSheet UI — this app's code never
+ * collects or even sees raw card data, which is both a security property
+ * and a PCI-DSS scope reduction.
+ *
+ * The dollar amounts shown here (consultation fee / platform fee / total)
+ * are for the user's information only. The *authoritative* amount is
+ * computed server-side in `createPaymentIntent` (functions/src/payments.ts)
+ * from the doctor's own `consultationFee` plus a fixed platform fee — the
+ * client never sends an amount at all (see `CreatePaymentIntentInput`),
+ * so a tampered client value has nothing to tamper: the server-derived
+ * `amount` returned in the response is what's rendered here.
+ */
+
+const PLATFORM_FEE = 5;
+
+type Props = StackScreenProps<RootStackParamList, 'Payment'>;
+
+type InitState =
+  | { status: 'loading' }
+  | { status: 'ready'; totalAmount: number }
+  | { status: 'error'; message: string };
+
+const PaymentScreen = ({ navigation, route }: Props) => {
   const { appointment } = route.params;
-  const [selectedMethod, setSelectedMethod] = useState('card');
-  const [cardNumber, setCardNumber] = useState('');
-  const [expiryDate, setExpiryDate] = useState('');
-  const [cvv, setCvv] = useState('');
-  const [cardholderName, setCardholderName] = useState('');
-  const [loading, setLoading] = useState(false);
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
+  const [initState, setInitState] = useState<InitState>({ status: 'loading' });
+  const [paying, setPaying] = useState(false);
 
-  const paymentMethods = [
-    { id: 'card', name: 'Credit/Debit Card', icon: 'card' },
-    { id: 'paypal', name: 'PayPal', icon: 'logo-paypal' },
-    { id: 'apple', name: 'Apple Pay', icon: 'logo-apple' },
-    { id: 'google', name: 'Google Pay', icon: 'logo-google' },
-  ];
-
-  const handlePayment = async () => {
-    if (selectedMethod === 'card' && (!cardNumber || !expiryDate || !cvv || !cardholderName)) {
-      Alert.alert('Error', 'Please fill in all card details');
-      return;
+  const setUpPaymentSheet = useCallback(async () => {
+    setInitState({ status: 'loading' });
+    try {
+      const result = await createPaymentIntent({ appointmentId: appointment.id });
+      const { error } = await initPaymentSheet({
+        paymentIntentClientSecret: result.clientSecret,
+        merchantDisplayName: 'CareConnect',
+      });
+      if (error) {
+        setInitState({ status: 'error', message: error.message });
+        return;
+      }
+      setInitState({ status: 'ready', totalAmount: result.amount });
+    } catch (error) {
+      const message = error instanceof ServiceError ? error.message : 'Failed to start payment. Please try again.';
+      setInitState({ status: 'error', message });
     }
+  }, [appointment.id, initPaymentSheet]);
 
-    setLoading(true);
-    
-    // Simulate payment processing
-    setTimeout(() => {
+  useEffect(() => {
+    setUpPaymentSheet();
+  }, [setUpPaymentSheet]);
+
+  const handlePayNow = async () => {
+    setPaying(true);
+    try {
+      const { error } = await presentPaymentSheet();
+      if (error) {
+        // A cancellation is not a failure worth alarming the user about;
+        // any other error (declined card, network issue, etc.) is shown
+        // verbatim from Stripe rather than a fabricated success message.
+        if (error.code !== 'Canceled') {
+          Alert.alert('Payment Failed', error.message);
+        }
+        return;
+      }
       Alert.alert(
         'Payment Successful',
         'Your payment has been processed successfully!',
         [{ text: 'OK', onPress: () => navigation.goBack() }]
       );
-      setLoading(false);
-    }, 2000);
+    } finally {
+      setPaying(false);
+    }
   };
 
-  const renderPaymentMethod = (method: any) => (
-    <TouchableOpacity
-      key={method.id}
-      style={[
-        styles.paymentMethodCard,
-        selectedMethod === method.id && styles.paymentMethodCardSelected,
-      ]}
-      onPress={() => setSelectedMethod(method.id)}
-    >
-      <Ionicons
-        name={method.icon as any}
-        size={24}
-        color={selectedMethod === method.id ? '#2196F3' : '#666'}
-      />
-      <Text
-        style={[
-          styles.paymentMethodText,
-          selectedMethod === method.id && styles.paymentMethodTextSelected,
-        ]}
-      >
-        {method.name}
-      </Text>
-      {selectedMethod === method.id && (
-        <Ionicons name="checkmark-circle" size={20} color="#2196F3" />
-      )}
-    </TouchableOpacity>
-  );
+  const consultationFee = initState.status === 'ready' ? initState.totalAmount - PLATFORM_FEE : null;
 
   return (
     <View style={styles.container}>
@@ -79,6 +107,8 @@ const PaymentScreen = ({ navigation, route }: any) => {
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#2196F3" />
         </TouchableOpacity>
@@ -87,101 +117,76 @@ const PaymentScreen = ({ navigation, route }: any) => {
       </View>
 
       <View style={styles.content}>
-        {/* Payment Summary */}
         <View style={styles.summaryCard}>
           <Text style={styles.summaryTitle}>Payment Summary</Text>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Consultation Fee</Text>
-            <Text style={styles.summaryValue}>${appointment?.consultationFee || 50}</Text>
-          </View>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Platform Fee</Text>
-            <Text style={styles.summaryValue}>$5.00</Text>
-          </View>
-          <View style={styles.summaryDivider} />
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryTotalLabel}>Total</Text>
-            <Text style={styles.summaryTotalValue}>
-              ${(appointment?.consultationFee || 50) + 5}
-            </Text>
-          </View>
+          <Text style={styles.appointmentContext}>
+            Appointment on {appointment.date.toLocaleDateString()} at {appointment.time}
+          </Text>
+
+          {initState.status === 'loading' && (
+            <View style={styles.pendingRow}>
+              <ActivityIndicator size="small" color="#2196F3" />
+              <Text style={styles.pendingText}>Calculating your total&hellip;</Text>
+            </View>
+          )}
+
+          {initState.status === 'error' && <ErrorBanner message={initState.message} />}
+
+          {initState.status === 'ready' && consultationFee !== null && (
+            <>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Consultation Fee</Text>
+                <Text style={styles.summaryValue}>${consultationFee.toFixed(2)}</Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Platform Fee</Text>
+                <Text style={styles.summaryValue}>${PLATFORM_FEE.toFixed(2)}</Text>
+              </View>
+              <View style={styles.summaryDivider} />
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryTotalLabel}>Total</Text>
+                <Text style={styles.summaryTotalValue}>${initState.totalAmount.toFixed(2)}</Text>
+              </View>
+            </>
+          )}
         </View>
 
-        {/* Payment Methods */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Payment Method</Text>
-          {paymentMethods.map(renderPaymentMethod)}
-        </View>
-
-        {/* Card Details */}
-        {selectedMethod === 'card' && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Card Details</Text>
-            
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Card Number</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="1234 5678 9012 3456"
-                value={cardNumber}
-                onChangeText={setCardNumber}
-                keyboardType="numeric"
-                maxLength={19}
-              />
-            </View>
-
-            <View style={styles.inputRow}>
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Expiry Date</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="MM/YY"
-                  value={expiryDate}
-                  onChangeText={setExpiryDate}
-                  keyboardType="numeric"
-                  maxLength={5}
-                />
-              </View>
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>CVV</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="123"
-                  value={cvv}
-                  onChangeText={setCvv}
-                  keyboardType="numeric"
-                  maxLength={4}
-                  secureTextEntry
-                />
-              </View>
-            </View>
-
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Cardholder Name</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="John Doe"
-                value={cardholderName}
-                onChangeText={setCardholderName}
-                autoCapitalize="words"
-              />
-            </View>
-          </View>
+        {initState.status === 'error' && (
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={setUpPaymentSheet}
+            accessibilityRole="button"
+            accessibilityLabel="Retry setting up payment"
+          >
+            <Text style={styles.retryButtonText}>Try Again</Text>
+          </TouchableOpacity>
         )}
 
-        {/* Security Notice */}
-        <View style={styles.securityNotice}>
-          <Ionicons name="shield-checkmark" size={20} color="#4CAF50" />
-          <Text style={styles.securityText}>
-            Your payment information is encrypted and secure
+        <View style={styles.methodNotice}>
+          <Ionicons name="card" size={20} color="#2196F3" />
+          <Text style={styles.methodNoticeText}>
+            Card via Stripe. Apple Pay and Google Pay are coming soon.
           </Text>
         </View>
 
-        {/* Pay Button */}
+        <View style={styles.securityNotice}>
+          <Ionicons name="shield-checkmark" size={20} color="#4CAF50" />
+          <Text style={styles.securityText}>
+            Your card details are entered directly into Stripe&apos;s secure payment
+            sheet — CareConnect never sees or stores them.
+          </Text>
+        </View>
+
         <TouchableOpacity
-          style={[styles.payButton, loading && styles.payButtonDisabled]}
-          onPress={handlePayment}
-          disabled={loading}
+          style={[
+            styles.payButton,
+            (initState.status !== 'ready' || paying) && styles.payButtonDisabled,
+          ]}
+          onPress={handlePayNow}
+          disabled={initState.status !== 'ready' || paying}
+          accessibilityRole="button"
+          accessibilityLabel="Pay now"
+          accessibilityState={{ disabled: initState.status !== 'ready' || paying }}
         >
           <LinearGradient
             colors={['#4CAF50', '#45A049']}
@@ -189,7 +194,11 @@ const PaymentScreen = ({ navigation, route }: any) => {
           >
             <Ionicons name="card" size={20} color="white" />
             <Text style={styles.payButtonText}>
-              {loading ? 'Processing...' : `Pay $${(appointment?.consultationFee || 50) + 5}`}
+              {paying
+                ? 'Processing...'
+                : initState.status === 'ready'
+                  ? `Pay $${initState.totalAmount.toFixed(2)}`
+                  : 'Preparing Payment...'}
             </Text>
           </LinearGradient>
         </TouchableOpacity>
@@ -242,7 +251,22 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#333',
+    marginBottom: 8,
+  },
+  appointmentContext: {
+    fontSize: 14,
+    color: '#666',
     marginBottom: 15,
+  },
+  pendingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pendingText: {
+    fontSize: 14,
+    color: '#999',
+    fontStyle: 'italic',
   },
   summaryRow: {
     flexDirection: 'row',
@@ -274,68 +298,32 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#4CAF50',
   },
-  section: {
-    backgroundColor: 'white',
-    borderRadius: 12,
-    padding: 20,
+  retryButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: '#E3F2FD',
     marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
   },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 15,
+  retryButtonText: {
+    color: '#1976D2',
+    fontSize: 14,
+    fontWeight: '600',
   },
-  paymentMethodCard: {
+  methodNotice: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 15,
-    borderRadius: 12,
-    backgroundColor: '#F5F5F5',
-    marginBottom: 10,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  paymentMethodCardSelected: {
     backgroundColor: '#E3F2FD',
-    borderColor: '#2196F3',
-  },
-  paymentMethodText: {
-    flex: 1,
-    marginLeft: 12,
-    fontSize: 16,
-    color: '#666',
-    fontWeight: '500',
-  },
-  paymentMethodTextSelected: {
-    color: '#2196F3',
-  },
-  inputContainer: {
-    marginBottom: 15,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 12,
     padding: 15,
-    fontSize: 16,
-    color: '#333',
-    backgroundColor: '#FAFAFA',
+    borderRadius: 12,
+    marginBottom: 15,
+    gap: 10,
   },
-  inputRow: {
-    flexDirection: 'row',
-    gap: 15,
+  methodNoticeText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#1565C0',
   },
   securityNotice: {
     flexDirection: 'row',
@@ -344,12 +332,12 @@ const styles = StyleSheet.create({
     padding: 15,
     borderRadius: 12,
     marginBottom: 20,
+    gap: 10,
   },
   securityText: {
-    marginLeft: 10,
+    flex: 1,
     fontSize: 14,
     color: '#2E7D32',
-    flex: 1,
   },
   payButton: {
     borderRadius: 12,
@@ -375,5 +363,3 @@ const styles = StyleSheet.create({
 });
 
 export default PaymentScreen;
-
-

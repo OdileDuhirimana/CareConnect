@@ -3,6 +3,7 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getMessaging } from 'firebase/messaging';
+import { getFunctions } from 'firebase/functions';
 
 const REQUIRED_VARS = [
   'EXPO_PUBLIC_FIREBASE_API_KEY',
@@ -31,6 +32,7 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 export const messaging = getMessaging(app);
+export const functions = getFunctions(app);
 
 export const isFirebaseConfigured = () => true; // init already validated above
 
