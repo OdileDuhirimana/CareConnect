@@ -8,3 +8,12 @@ typings/
 # Node.js dependency directory
 node_modules/
 *.local
+
+# test coverage output
+coverage/
+
+# Firebase Emulator Suite debug/log output (see functions/package.json's
+# "test:rules:local" script and .github/workflows/ci.yml's
+# "firestore-rules" job)
+*-debug.log
+firebase-export-*/
