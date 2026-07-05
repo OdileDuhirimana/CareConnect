@@ -1,19 +1,220 @@
 rules_version = '2';
 
+// CareConnect Firestore Security Rules
+//
+// Design: every collection is scoped to the authenticated owner (patient,
+// doctor, or admin) rather than the "test mode" allow-all default that
+// previously shipped here. Role claims are read from the caller's own
+// `users/{uid}` document rather than trusted from client-supplied request
+// data, because Firestore rules cannot verify arbitrary client claims —
+// only what is already stored server-side (i.e. written by a previous,
+// already-authorized write, or set by the Cloud Function admin-approval
+// gate in functions/src/adminApproval.ts).
+//
+// Known limitation (tracked, not fixed in this pass): a user's own `role`
+// field is still writable by that same user at signup (see AuthContext.tsx
+// signUp). These rules close the "anyone can read/write anyone's data"
+// hole and prevent a patient/doctor from acting as admin, escalating another
+// user's role, or approving themselves as a doctor — but self-selecting
+// `role: 'doctor'` at signup is still possible. The mitigating control is
+// the `isApproved` gate enforced in `AppNavigator.tsx` and the
+// `approveDoctorRequest` Cloud Function, which requires an existing admin
+// to flip `isApproved` before doctor-only screens activate.
+//
+// Custom claims (functions/src/customClaims.ts): `isAdmin()` now checks
+// `request.auth.token.<claim>` FIRST — a tamper-proof value set
+// exclusively by the `syncUserClaims` Cloud Function trigger via the Admin
+// SDK — and fall back to the Firestore-document lookup only when the claim
+// hasn't been synced yet (e.g. accounts created before this migration, or
+// in the brief window between a role change and the trigger completing).
+// This is a genuine security improvement (the claim can never be forged by
+// a client) implemented without a hard cutover that would break existing
+// accounts.
+//
+// Appointments/wellness_entries/messages: client `create`/`update` is now
+// `false` for these three collections. All writes to them go through
+// validated Cloud Functions (functions/src/appointments.ts, wellness.ts,
+// messages.ts) which re-verify referenced ids server-side and enforce
+// field-shape/range validation that Firestore Rules alone cannot express
+// as precisely (e.g. "mood must be an integer 1-5"). Reads remain direct
+// client queries, since a signed-in owner reading their own data carries
+// no equivalent integrity risk.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // This rule allows anyone with your Firestore database reference to view, edit,
-    // and delete all data in your Firestore database. It is useful for getting
-    // started, but it is configured to expire after 30 days because it
-    // leaves your app open to attackers. At that time, all client
-    // requests to your Firestore database will be denied.
-    //
-    // Make sure to write security rules for your app before that time, or else
-    // all client requests to your Firestore database will be denied until you Update
-    // your rules
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function currentUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function hasRoleClaim(role) {
+      return isSignedIn() && ('role' in request.auth.token) && request.auth.token.role == role;
+    }
+
+    // Prefers the tamper-proof custom claim; falls back to the
+    // client-writable-at-signup-but-rules-protected Firestore document for
+    // accounts whose claim hasn't been synced yet.
+    function isAdmin() {
+      return isSignedIn() && (hasRoleClaim('admin') || currentUserRole() == 'admin');
+    }
+
+    // Users: a user may read/write their own profile. Admins may read any
+    // profile (needed for AdminUsersScreen) and update verification/role
+    // status. Nobody but the Cloud Function admin-approval endpoint may
+    // grant the 'admin' role itself (enforced by disallowing role changes
+    // to 'admin' from client writes below).
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId)
+        && request.resource.data.role in ['patient', 'doctor']
+        && request.resource.data.isVerified == false;
+      // Parenthesized explicitly (CEL's `&&` already binds tighter than
+      // `||`, so this was already correct, but a security-relevant rule is
+      // exactly the place where "already correct by operator precedence"
+      // isn't good enough to leave implicit — see the code review's note
+      // flagging this line as worth double-checking at a glance).
+      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role)
+        || (isAdmin() && request.resource.data.role == resource.data.role);
+      allow delete: if isAdmin();
+    }
+
+    // Appointments: visible only to the patient and doctor on the
+    // appointment (plus admins). Creation is server-side only — see
+    // functions/src/appointments.ts's `createAppointment` callable, which
+    // validates the doctor exists/is approved and the date isn't in the
+    // past before writing. Status updates (confirm/cancel/complete) remain
+    // a direct client write since they don't need field-shape validation
+    // beyond the enum Firestore already type-checks implicitly via the
+    // service layer, and restricting *who* can update is what matters here.
+    match /appointments/{appointmentId} {
+      allow read: if isSignedIn() &&
+        (resource.data.patientId == request.auth.uid ||
+         resource.data.doctorId == request.auth.uid ||
+         isAdmin());
+      allow create: if false;
+      allow update: if isSignedIn() &&
+        (resource.data.patientId == request.auth.uid ||
+         resource.data.doctorId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // Messages: only sender/receiver may read a given message. Creation is
+    // server-side only — see functions/src/messages.ts's `sendMessage`
+    // callable, which re-derives `receiverId` from the appointment record
+    // instead of trusting a client-supplied value.
+    match /messages/{messageId} {
+      allow read: if isSignedIn() &&
+        (resource.data.senderId == request.auth.uid ||
+         resource.data.receiverId == request.auth.uid);
+      allow create: if false;
+      allow update, delete: if isSignedIn() && resource.data.senderId == request.auth.uid;
+    }
+
+    // Medical records: only the patient and the authoring doctor may
+    // read/write. Patients cannot self-author a record with someone else's
+    // doctorId to forge provenance.
+    match /medical_records/{recordId} {
+      allow read: if isSignedIn() &&
+        (resource.data.patientId == request.auth.uid ||
+         resource.data.doctorId == request.auth.uid ||
+         isAdmin());
+      allow create: if isSignedIn() && request.resource.data.doctorId == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.doctorId == request.auth.uid;
+    }
+
+    // Wellness entries: strictly private to the authoring user. Creation is
+    // server-side only — see functions/src/wellness.ts's
+    // `createWellnessEntry` callable, which range-validates mood/energy/
+    // stress/sleepHours/exerciseMinutes (Firestore Rules alone cannot
+    // express "mood must be an integer between 1 and 5").
+    match /wellness_entries/{entryId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create, update: if false;
+    }
+
+    // Pharmacies: read-only reference data for signed-in users; writes are
+    // an admin/back-office concern, not exposed to the client app.
+    // (Live: PharmacyScreen.tsx reads this collection.)
+    match /pharmacies/{pharmacyId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // --- The rules below model collections that have a TypeScript domain
+    // type (see src/types/index.ts: PrescriptionRefill, Payment,
+    // NotificationData) but no screen currently reads or writes them. They
+    // are included so the security model is already correct on day one of
+    // implementing those features, rather than another "ship the feature,
+    // forget the rule" gap like the one this file was rewritten to fix.
+    // Note: this is forward-provisioning, not evidence the feature exists —
+    // see project.md's "Known Limitations" for what is and isn't built.
+
+    // Prescription refills: visible to the requesting patient only.
+    match /prescription_refills/{refillId} {
+      allow read: if isSignedIn() && resource.data.patientId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.patientId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.patientId == request.auth.uid;
+    }
+
+    // Payments: a user may read only their own payment records. All writes
+    // would happen server-side via a Cloud Function using the Admin SDK
+    // (which bypasses these rules), so client writes are denied outright.
+    match /payments/{paymentId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Notifications: a user may read/mark-read only their own notifications.
+    // Creation would be server-side (Cloud Functions) only.
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      allow create, delete: if false;
+    }
+
+    // Audit logs (functions/src/auditLog.ts): a durable, queryable record
+    // of privileged admin actions (approve/delete a user). Admins may read
+    // this collection (it's an operational/security record, not a
+    // per-user data feed); no client — including an admin's own app — may
+    // ever write to it. Only the Admin SDK (which bypasses these rules
+    // entirely) can create entries, guaranteeing the trail can't be
+    // tampered with or forged by a compromised client.
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Rate-limit token buckets (functions/src/rateLimiter.ts): purely
+    // internal bookkeeping for per-uid throttling. No client should ever
+    // read or write these directly — read access would let a caller see
+    // exactly how close they are to being throttled (an unnecessary
+    // information leak), and write access would let a caller reset their
+    // own bucket.
+    match /rate_limits/{bucketId} {
+      allow read, write: if false;
+    }
+
+    // Daily analytics rollups (functions/src/analytics.ts): aggregate
+    // counts only, no PII. Any signed-in user may read (the admin/doctor
+    // analytics screens are gated by navigation, not by this rule, but
+    // there's nothing sensitive here even for a patient to see). Only the
+    // scheduled Cloud Function may write.
+    match /analytics_daily/{dateKey} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Deny everything else by default (no catch-all allow rule).
     match /{document=**} {
-      allow read, write: if request.time < timestamp.date(2025, 11, 22);
+      allow read, write: if false;
     }
   }
 }

@@ -1,0 +1,42 @@
+rules_version = '2';
+
+// CareConnect Firebase Storage Security Rules
+//
+// Mirrors the ownership model in firestore.rules: users can only read/write
+// files under their own uid-scoped folder. Medical files (lab scans,
+// prescriptions attached to a record) are namespaced by the owning
+// patient's uid so the same per-user rule can gate access without needing
+// a Firestore lookup on every storage request.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Profile images, general user uploads.
+    match /users/{userId}/{allPaths=**} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId)
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|application/pdf');
+    }
+
+    // Medical files (lab scans, prescriptions) namespaced by patient uid.
+    match /medical_files/{patientId}/{allPaths=**} {
+      allow read: if isOwner(patientId);
+      allow write: if isOwner(patientId)
+        && request.resource.size < 20 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|application/pdf');
+    }
+
+    // Deny everything else by default.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
