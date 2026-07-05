@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,58 +6,54 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Calendar } from 'react-native-calendars';
-import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { CompositeScreenProps } from '@react-navigation/native';
+import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { StackScreenProps } from '@react-navigation/stack';
 import { Appointment } from '../../types';
+import { useAuth } from '../../context/AuthContext';
+import { fetchAppointmentsForDoctorOnDate, updateAppointmentStatus, ServiceError } from '../../services';
+import { DoctorTabParamList, RootStackParamList } from '../../navigation/types';
 
-const DoctorScheduleScreen = ({ navigation }: any) => {
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<DoctorTabParamList, 'Schedule'>,
+  StackScreenProps<RootStackParamList>
+>;
+
+const DoctorScheduleScreen = ({ navigation }: Props) => {
+  const { user } = useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchAppointments();
-  }, [selectedDate]);
-
-  const fetchAppointments = async () => {
+  const fetchAppointments = useCallback(async () => {
+    if (!user?.id) return;
+    setErrorMessage(null);
     try {
-      const appointmentsRef = collection(db, 'appointments');
-      const q = query(
-        appointmentsRef,
-        where('doctorId', '==', 'current-doctor-id'), // This should come from auth context
-        where('date', '==', selectedDate),
-        orderBy('time', 'asc')
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const appointmentsData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().date.toDate(),
-        createdAt: doc.data().createdAt.toDate(),
-        updatedAt: doc.data().updatedAt.toDate(),
-      })) as Appointment[];
-      
+      const appointmentsData = await fetchAppointmentsForDoctorOnDate(user.id, selectedDate);
       setAppointments(appointmentsData);
     } catch (error) {
-      console.error('Error fetching appointments:', error);
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to load appointments.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id, selectedDate]);
+
+  useEffect(() => {
+    fetchAppointments();
+  }, [fetchAppointments]);
 
   const handleAppointmentAction = async (appointmentId: string, action: 'confirm' | 'cancel') => {
     try {
-      await updateDoc(doc(db, 'appointments', appointmentId), {
-        status: action === 'confirm' ? 'confirmed' : 'cancelled',
-        updatedAt: new Date(),
-      });
+      await updateAppointmentStatus(appointmentId, action === 'confirm' ? 'confirmed' : 'cancelled');
       fetchAppointments();
     } catch (error) {
-      Alert.alert('Error', 'Failed to update appointment');
+      const message = error instanceof ServiceError ? error.message : 'Failed to update appointment';
+      Alert.alert('Error', message);
     }
   };
 
@@ -110,20 +106,18 @@ const DoctorScheduleScreen = ({ navigation }: any) => {
 
       {item.status === 'confirmed' && (
         <View style={styles.appointmentActions}>
-          <TouchableOpacity
-            style={styles.startButton}
-            onPress={() => navigation.navigate('VideoCall', { appointment: item })}
-          >
-            <Ionicons name="videocam" size={16} color="white" />
-            <Text style={styles.actionButtonText}>Start Call</Text>
-          </TouchableOpacity>
-          
+          {/* Video calling was a non-functional UI shell (no WebRTC behind
+              it) and has been removed rather than shipped as a dead-end
+              button; messaging is the one real-time feature that actually
+              works, so this replaces the old "Start Call" action. */}
           <TouchableOpacity
             style={styles.chatButton}
             onPress={() => navigation.navigate('Chat', { appointment: item })}
+            accessibilityRole="button"
+            accessibilityLabel="Message patient"
           >
             <Ionicons name="chatbubble" size={16} color="white" />
-            <Text style={styles.actionButtonText}>Chat</Text>
+            <Text style={styles.actionButtonText}>Message</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -141,23 +135,44 @@ const DoctorScheduleScreen = ({ navigation }: any) => {
     }
   };
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2196F3" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#2196F3" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Schedule</Text>
-        <TouchableOpacity style={styles.addButton}>
+        <TouchableOpacity
+          style={styles.addButton}
+          accessibilityRole="button"
+          accessibilityLabel="Add appointment"
+        >
           <Ionicons name="add" size={24} color="#2196F3" />
         </TouchableOpacity>
       </View>
 
+      {errorMessage && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle" size={18} color="#F44336" />
+          <Text style={styles.errorBannerText}>{errorMessage}</Text>
+        </View>
+      )}
+
       <Calendar
-        onDayPress={(day) => setSelectedDate(day.dateString)}
+        onDayPress={(day: { dateString: string }) => setSelectedDate(day.dateString)}
         markedDates={{
           [selectedDate]: {
             selected: true,
@@ -203,6 +218,25 @@ const DoctorScheduleScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  errorBannerText: {
+    color: '#C62828',
+    fontSize: 14,
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',
@@ -332,15 +366,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 8,
     backgroundColor: '#F44336',
-  },
-  startButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#2196F3',
   },
   chatButton: {
     flex: 1,

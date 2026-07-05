@@ -10,35 +10,29 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, addDoc, query, where, orderBy, onSnapshot } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { StackScreenProps } from '@react-navigation/stack';
 import { Message } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { subscribeToAppointmentMessages, sendMessage as sendMessageService, ServiceError } from '../../services';
+import { RootStackParamList } from '../../navigation/types';
+import { ErrorBanner } from '../../components';
 
-const ChatScreen = ({ navigation, route }: any) => {
+type Props = StackScreenProps<RootStackParamList, 'Chat'>;
+
+const ChatScreen = ({ navigation, route }: Props) => {
   const { appointment } = route.params;
   const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    const messagesRef = collection(db, 'messages');
-    const q = query(
-      messagesRef,
-      where('appointmentId', '==', appointment.id),
-      orderBy('createdAt', 'asc')
+    const unsubscribe = subscribeToAppointmentMessages(
+      appointment.id,
+      (messagesData) => setMessages(messagesData),
+      (error) => setErrorMessage(error.message)
     );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const messagesData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt.toDate(),
-      })) as Message[];
-      
-      setMessages(messagesData);
-    });
 
     return unsubscribe;
   }, [appointment.id]);
@@ -47,20 +41,17 @@ const ChatScreen = ({ navigation, route }: any) => {
     if (!newMessage.trim() || !user?.id) return;
 
     setLoading(true);
+    setErrorMessage(null);
     try {
-      await addDoc(collection(db, 'messages'), {
+      await sendMessageService({
         senderId: user.id,
         receiverId: appointment.doctorId,
         appointmentId: appointment.id,
-        content: newMessage.trim(),
-        type: 'text',
-        isRead: false,
-        createdAt: new Date(),
+        content: newMessage,
       });
-      
       setNewMessage('');
     } catch (error) {
-      console.error('Error sending message:', error);
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to send message.');
     } finally {
       setLoading(false);
     }
@@ -99,6 +90,8 @@ const ChatScreen = ({ navigation, route }: any) => {
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#2196F3" />
         </TouchableOpacity>
@@ -108,10 +101,16 @@ const ChatScreen = ({ navigation, route }: any) => {
             {appointment.date.toLocaleDateString()} at {appointment.time}
           </Text>
         </View>
-        <TouchableOpacity style={styles.videoButton}>
+        <TouchableOpacity
+          style={styles.videoButton}
+          accessibilityRole="button"
+          accessibilityLabel="Start video call"
+        >
           <Ionicons name="videocam" size={24} color="#2196F3" />
         </TouchableOpacity>
       </View>
+
+      {errorMessage && <ErrorBanner message={errorMessage} />}
 
       <FlatList
         data={messages}
@@ -135,6 +134,8 @@ const ChatScreen = ({ navigation, route }: any) => {
           style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
           onPress={sendMessage}
           disabled={!newMessage.trim() || loading}
+          accessibilityRole="button"
+          accessibilityLabel="Send message"
         >
           <Ionicons name="send" size={20} color="white" />
         </TouchableOpacity>

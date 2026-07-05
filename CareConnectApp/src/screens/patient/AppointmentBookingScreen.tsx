@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,14 +12,27 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Calendar } from 'react-native-calendars';
-import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../config/firebase';
-import { Doctor, Appointment } from '../../types';
+import { StackScreenProps } from '@react-navigation/stack';
 import { useAuth } from '../../context/AuthContext';
+import { createAppointment, fetchBookedSlots, ServiceError } from '../../services';
+import { RootStackParamList } from '../../navigation/types';
+import { Card, ErrorBanner } from '../../components';
 
 const { width } = Dimensions.get('window');
 
-const AppointmentBookingScreen = ({ navigation, route }: any) => {
+// Module-level constant (not component state) since the set of bookable
+// slot times is fixed and doesn't depend on props/state — keeping it out
+// of the component body means it isn't a new array reference on every
+// render, so it doesn't need to appear in the fetchAvailableSlots deps.
+const TIME_SLOTS = [
+  '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+  '12:00', '12:30', '14:00', '14:30', '15:00', '15:30',
+  '16:00', '16:30', '17:00', '17:30', '18:00', '18:30',
+];
+
+type Props = StackScreenProps<RootStackParamList, 'AppointmentBooking'>;
+
+const AppointmentBookingScreen = ({ navigation, route }: Props) => {
   const { doctor } = route.params;
   const { user } = useAuth();
   const [selectedDate, setSelectedDate] = useState('');
@@ -30,40 +43,31 @@ const AppointmentBookingScreen = ({ navigation, route }: any) => {
   const [showCalendar, setShowCalendar] = useState(false);
   const [loading, setLoading] = useState(false);
   const [availableSlots, setAvailableSlots] = useState<string[]>([]);
+  const [slotsError, setSlotsError] = useState<string | null>(null);
 
-  const timeSlots = [
-    '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
-    '12:00', '12:30', '14:00', '14:30', '15:00', '15:30',
-    '16:00', '16:30', '17:00', '17:30', '18:00', '18:30',
-  ];
+  const fetchAvailableSlots = useCallback(async () => {
+    setSlotsError(null);
+    try {
+      const bookedSlots = await fetchBookedSlots(doctor.id, selectedDate);
+      const available = TIME_SLOTS.filter(slot => !bookedSlots.includes(slot));
+      setAvailableSlots(available);
+    } catch (error) {
+      setSlotsError(error instanceof ServiceError ? error.message : 'Failed to load available time slots.');
+      setAvailableSlots([]);
+    }
+  }, [doctor.id, selectedDate]);
 
   useEffect(() => {
     if (selectedDate) {
       fetchAvailableSlots();
     }
-  }, [selectedDate]);
-
-  const fetchAvailableSlots = async () => {
-    try {
-      const appointmentsRef = collection(db, 'appointments');
-      const q = query(
-        appointmentsRef,
-        where('doctorId', '==', doctor.id),
-        where('date', '==', selectedDate),
-        where('status', 'in', ['confirmed', 'pending'])
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const bookedSlots = querySnapshot.docs.map(doc => doc.data().time);
-      
-      const available = timeSlots.filter(slot => !bookedSlots.includes(slot));
-      setAvailableSlots(available);
-    } catch (error) {
-      console.error('Error fetching available slots:', error);
-    }
-  };
+  }, [selectedDate, fetchAvailableSlots]);
 
   const handleBookAppointment = async () => {
+    if (!user?.id) {
+      Alert.alert('Error', 'You must be signed in to book an appointment.');
+      return;
+    }
     if (!selectedDate || !selectedTime || !reason.trim()) {
       Alert.alert('Error', 'Please fill in all required fields');
       return;
@@ -71,29 +75,25 @@ const AppointmentBookingScreen = ({ navigation, route }: any) => {
 
     setLoading(true);
     try {
-      const appointmentData: Omit<Appointment, 'id'> = {
-        patientId: user?.id ?? '',
+      await createAppointment({
+        patientId: user.id,
         doctorId: doctor.id,
-        date: new Date(selectedDate),
+        date: selectedDate,
         time: selectedTime,
         duration: 30,
         type: appointmentType,
-        status: 'pending',
-        reason: reason.trim(),
-        notes: notes.trim(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+        reason,
+        notes,
+      });
 
-      await addDoc(collection(db, 'appointments'), appointmentData);
-      
       Alert.alert(
         'Success',
         'Appointment request sent! The doctor will confirm your appointment.',
         [{ text: 'OK', onPress: () => navigation.goBack() }]
       );
     } catch (error) {
-      Alert.alert('Error', 'Failed to book appointment. Please try again.');
+      const message = error instanceof ServiceError ? error.message : 'Failed to book appointment. Please try again.';
+      Alert.alert('Error', message);
     } finally {
       setLoading(false);
     }
@@ -116,6 +116,8 @@ const AppointmentBookingScreen = ({ navigation, route }: any) => {
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#2196F3" />
         </TouchableOpacity>
@@ -123,7 +125,7 @@ const AppointmentBookingScreen = ({ navigation, route }: any) => {
         <View style={styles.placeholder} />
       </View>
 
-      <View style={styles.doctorInfo}>
+      <Card style={styles.doctorInfo}>
         <View style={styles.doctorImageContainer}>
           <Ionicons name="person" size={40} color="#666" />
         </View>
@@ -135,7 +137,7 @@ const AppointmentBookingScreen = ({ navigation, route }: any) => {
         <View style={styles.consultationFee}>
           <Text style={styles.feeText}>${doctor.consultationFee}</Text>
         </View>
-      </View>
+      </Card>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Appointment Type</Text>
@@ -203,6 +205,10 @@ const AppointmentBookingScreen = ({ navigation, route }: any) => {
       {selectedDate && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Select Time</Text>
+          {slotsError && <ErrorBanner message={slotsError} />}
+          {!slotsError && availableSlots.length === 0 && (
+            <Text style={styles.noSlotsText}>No available time slots for this date. Please choose another date.</Text>
+          )}
           <View style={styles.timeSlotsContainer}>
             {availableSlots.map((slot) => (
               <TouchableOpacity
@@ -278,7 +284,7 @@ const AppointmentBookingScreen = ({ navigation, route }: any) => {
               </TouchableOpacity>
             </View>
             <Calendar
-              onDayPress={(day) => {
+              onDayPress={(day: { dateString: string }) => {
                 setSelectedDate(day.dateString);
                 setShowCalendar(false);
               }}
@@ -304,6 +310,11 @@ const AppointmentBookingScreen = ({ navigation, route }: any) => {
 };
 
 const styles = StyleSheet.create({
+  noSlotsText: {
+    fontSize: 14,
+    color: '#999',
+    marginBottom: 12,
+  },
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',
@@ -328,11 +339,13 @@ const styles = StyleSheet.create({
   placeholder: {
     width: 40,
   },
+  // Base card visuals (background, radius, shadow) now come from the
+  // shared <Card> component; this only adds this section's layout/spacing.
   doctorInfo: {
-    backgroundColor: 'white',
-    padding: 20,
     flexDirection: 'row',
     alignItems: 'center',
+    marginHorizontal: 20,
+    marginTop: 20,
     marginBottom: 20,
   },
   doctorImageContainer: {

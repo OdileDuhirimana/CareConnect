@@ -9,8 +9,12 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { StackScreenProps } from '@react-navigation/stack';
+import { RootStackParamList } from '../../navigation/types';
 
-const SettingsScreen = ({ navigation }: any) => {
+type Props = StackScreenProps<RootStackParamList, 'Settings'>;
+
+const SettingsScreen = ({ navigation }: Props) => {
   const [notifications, setNotifications] = useState(true);
   const [emailUpdates, setEmailUpdates] = useState(true);
   const [smsUpdates, setSmsUpdates] = useState(false);
@@ -124,6 +128,8 @@ const SettingsScreen = ({ navigation }: any) => {
       style={styles.settingItem}
       onPress={item.onPress}
       disabled={item.type === 'switch'}
+      accessibilityRole={item.type === 'switch' ? undefined : 'button'}
+      accessibilityLabel={item.type === 'switch' ? undefined : item.title}
     >
       <View style={styles.settingItemLeft}>
         <Text style={styles.settingItemTitle}>{item.title}</Text>
@@ -136,6 +142,7 @@ const SettingsScreen = ({ navigation }: any) => {
             onValueChange={item.onValueChange}
             trackColor={{ false: '#E0E0E0', true: '#2196F3' }}
             thumbColor={item.value ? 'white' : '#BDBDBD'}
+            accessibilityLabel={item.title}
           />
         ) : (
           <Ionicons name="chevron-forward" size={20} color="#666" />
@@ -159,6 +166,8 @@ const SettingsScreen = ({ navigation }: any) => {
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#2196F3" />
         </TouchableOpacity>

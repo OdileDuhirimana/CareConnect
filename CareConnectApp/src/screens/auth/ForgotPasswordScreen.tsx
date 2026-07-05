@@ -11,10 +11,14 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { StackScreenProps } from '@react-navigation/stack';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { auth } from '../../config/firebase';
+import { RootStackParamList } from '../../navigation/types';
 
-const ForgotPasswordScreen = ({ navigation }: any) => {
+type Props = StackScreenProps<RootStackParamList, 'ForgotPassword'>;
+
+const ForgotPasswordScreen = ({ navigation }: Props) => {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -49,6 +53,8 @@ const ForgotPasswordScreen = ({ navigation }: any) => {
           <TouchableOpacity
             style={styles.backButton}
             onPress={() => navigation.goBack()}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
           >
             <Ionicons name="arrow-back" size={24} color="#2196F3" />
           </TouchableOpacity>
@@ -59,7 +65,7 @@ const ForgotPasswordScreen = ({ navigation }: any) => {
             </View>
             <Text style={styles.title}>Forgot Password?</Text>
             <Text style={styles.subtitle}>
-              Don't worry! Enter your email address and we'll send you a link to reset your password.
+              Don&apos;t worry! Enter your email address and we&apos;ll send you a link to reset your password.
             </Text>
           </View>
 
@@ -74,6 +80,7 @@ const ForgotPasswordScreen = ({ navigation }: any) => {
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
+                accessibilityLabel="Email address"
               />
             </View>
 
@@ -81,6 +88,8 @@ const ForgotPasswordScreen = ({ navigation }: any) => {
               style={[styles.resetButton, loading && styles.resetButtonDisabled]}
               onPress={handleResetPassword}
               disabled={loading}
+              accessibilityRole="button"
+              accessibilityLabel="Send reset link"
             >
               <Text style={styles.resetButtonText}>
                 {loading ? 'Sending...' : 'Send Reset Link'}
@@ -90,6 +99,8 @@ const ForgotPasswordScreen = ({ navigation }: any) => {
             <TouchableOpacity
               style={styles.backToLoginButton}
               onPress={() => navigation.navigate('Login')}
+              accessibilityRole="button"
+              accessibilityLabel="Back to login"
             >
               <Text style={styles.backToLoginText}>Back to Login</Text>
             </TouchableOpacity>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,112 +7,193 @@ import {
   StyleSheet,
   TextInput,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, getDocs, query, where, orderBy, doc, updateDoc } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
+import { CompositeScreenProps } from '@react-navigation/native';
+import { DrawerScreenProps } from '@react-navigation/drawer';
+import { StackScreenProps } from '@react-navigation/stack';
 import { User } from '../../types';
+import {
+  fetchUsersPage,
+  setUserVerified,
+  deleteUserAccount,
+  approveDoctorRequest,
+  ServiceError,
+} from '../../services';
+import { AdminDrawerParamList, RootStackParamList } from '../../navigation/types';
+import { Card, ErrorBanner, EmptyState, LoadingIndicator } from '../../components';
 
-const AdminUsersScreen = ({ navigation }: any) => {
+const PAGE_SIZE = 20;
+
+type Props = CompositeScreenProps<
+  DrawerScreenProps<AdminDrawerParamList, 'Users'>,
+  StackScreenProps<RootStackParamList>
+>;
+
+/**
+ * Maps the UI's filter-tab selection to the server-side query constraints
+ * `userService.fetchUsersPage` understands. 'All' and 'Patients'/'Doctors'/
+ * 'Admins'/'Pending' are mutually exclusive in this UI, so at most one of
+ * `roleFilter`/`verifiedFilter` is ever set at a time.
+ */
+function filterTabToQueryParams(filter: string): { roleFilter?: User['role']; verifiedFilter?: boolean } {
+  switch (filter) {
+    case 'Patients':
+      return { roleFilter: 'patient' };
+    case 'Doctors':
+      return { roleFilter: 'doctor' };
+    case 'Admins':
+      return { roleFilter: 'admin' };
+    case 'Pending':
+      return { verifiedFilter: false };
+    default:
+      return {};
+  }
+}
+
+const SEARCH_DEBOUNCE_MS = 400;
+
+const AdminUsersScreen = ({ navigation }: Props) => {
   const [users, setUsers] = useState<User[]>([]);
-  const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  // Debounced separately from `searchQuery` so the search-input state
+  // updates immediately (no typing lag) while the actual Firestore query —
+  // which now runs server-side per keystroke's settled value, not against
+  // an already-fetched in-memory page — only fires after the user pauses.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedFilter, setSelectedFilter] = useState('All');
   const [loading, setLoading] = useState(true);
+  const [refetching, setRefetching] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [cursor, setCursor] = useState<QueryDocumentSnapshot<DocumentData> | undefined>(undefined);
+  const [hasMore, setHasMore] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const filters = ['All', 'Patients', 'Doctors', 'Admins', 'Pending'];
 
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
-  useEffect(() => {
-    filterUsers();
-  }, [searchQuery, selectedFilter, users]);
-
-  const fetchUsers = async () => {
+  /**
+   * Fetches the first page for the currently selected filter/search. This
+   * is now a real server-side query (see userService.fetchUsersPage) —
+   * previously, `selectedFilter`/`searchQuery` only filtered whatever page
+   * was already in memory, so an admin searching for a user who existed on
+   * a later, unfetched page would silently see no results (the bug named
+   * explicitly in the code review's "Fastest Path to 90%").
+   */
+  const fetchUsers = useCallback(async () => {
+    setErrorMessage(null);
+    setRefetching(true);
     try {
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, orderBy('createdAt', 'desc'));
-      
-      const querySnapshot = await getDocs(q);
-      const usersData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt.toDate(),
-        updatedAt: doc.data().updatedAt.toDate(),
-      })) as User[];
-      
-      setUsers(usersData);
+      const { roleFilter, verifiedFilter } = filterTabToQueryParams(selectedFilter);
+      const page = await fetchUsersPage({
+        pageSize: PAGE_SIZE,
+        roleFilter,
+        verifiedFilter,
+        searchPrefix: debouncedSearch || undefined,
+      });
+      setUsers(page.users);
+      setCursor(page.nextCursor);
+      setHasMore(Boolean(page.nextCursor));
     } catch (error) {
-      console.error('Error fetching users:', error);
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to load users.');
     } finally {
       setLoading(false);
+      setRefetching(false);
     }
-  };
+  }, [selectedFilter, debouncedSearch]);
 
-  const filterUsers = () => {
-    let filtered = users;
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
 
-    if (selectedFilter === 'Patients') {
-      filtered = filtered.filter(user => user.role === 'patient');
-    } else if (selectedFilter === 'Doctors') {
-      filtered = filtered.filter(user => user.role === 'doctor');
-    } else if (selectedFilter === 'Admins') {
-      filtered = filtered.filter(user => user.role === 'admin');
-    } else if (selectedFilter === 'Pending') {
-      filtered = filtered.filter(user => !user.isVerified);
-    }
-
-    if (searchQuery.trim()) {
-      filtered = filtered.filter(user =>
-        user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        user.email.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
-
-    setFilteredUsers(filtered);
-  };
-
-  const handleUserAction = async (userId: string, action: 'approve' | 'suspend' | 'delete') => {
+  const fetchMoreUsers = async () => {
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
     try {
-      if (action === 'approve') {
-        await updateDoc(doc(db, 'users', userId), {
-          isVerified: true,
-          updatedAt: new Date(),
-        });
-        Alert.alert('Success', 'User approved successfully');
-      } else if (action === 'suspend') {
-        await updateDoc(doc(db, 'users', userId), {
-          isVerified: false,
-          updatedAt: new Date(),
-        });
-        Alert.alert('Success', 'User suspended successfully');
-      } else if (action === 'delete') {
-        Alert.alert(
-          'Delete User',
-          'Are you sure you want to delete this user? This action cannot be undone.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Delete',
-              style: 'destructive',
-              onPress: async () => {
-                // In a real app, you would delete the user document
-                Alert.alert('Success', 'User deleted successfully');
-              },
-            },
-          ]
-        );
-      }
-      fetchUsers();
+      const { roleFilter, verifiedFilter } = filterTabToQueryParams(selectedFilter);
+      const page = await fetchUsersPage({
+        pageSize: PAGE_SIZE,
+        after: cursor,
+        roleFilter,
+        verifiedFilter,
+        searchPrefix: debouncedSearch || undefined,
+      });
+      setUsers((prev) => [...prev, ...page.users]);
+      setCursor(page.nextCursor);
+      setHasMore(Boolean(page.nextCursor));
     } catch (error) {
-      Alert.alert('Error', 'Failed to perform action');
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to load more users.');
+    } finally {
+      setLoadingMore(false);
     }
+  };
+
+  const handleUserAction = async (user: User, action: 'approve' | 'suspend' | 'delete') => {
+    if (action === 'approve') {
+      try {
+        // Doctors go through the server-side admin-approval Cloud Function,
+        // which is the actual enforcement point for "doctors require admin
+        // approval before activation" (previously isApproved was written
+        // at signup and never checked by any authority). Patients only
+        // need the isVerified flag flipped, so they use the simpler path.
+        if (user.role === 'doctor') {
+          await approveDoctorRequest(user.id);
+        } else {
+          await setUserVerified(user.id, true);
+        }
+        Alert.alert('Success', 'User approved successfully');
+        fetchUsers();
+      } catch (error) {
+        const message = error instanceof ServiceError ? error.message : 'Failed to approve user';
+        Alert.alert('Error', message);
+      }
+      return;
+    }
+
+    if (action === 'suspend') {
+      try {
+        await setUserVerified(user.id, false);
+        Alert.alert('Success', 'User suspended successfully');
+        fetchUsers();
+      } catch (error) {
+        const message = error instanceof ServiceError ? error.message : 'Failed to suspend user';
+        Alert.alert('Error', message);
+      }
+      return;
+    }
+
+    // action === 'delete'
+    Alert.alert(
+      'Delete User',
+      'Are you sure you want to delete this user? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteUserAccount(user.id);
+              Alert.alert('Success', 'User deleted successfully');
+              fetchUsers();
+            } catch (error) {
+              const message = error instanceof ServiceError ? error.message : 'Failed to delete user';
+              Alert.alert('Error', message);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const renderUser = ({ item }: { item: User }) => (
-    <View style={styles.userCard}>
+    <Card style={styles.userCard}>
       <View style={styles.userInfo}>
         <View style={styles.userAvatar}>
           <Ionicons name="person" size={24} color="#666" />
@@ -139,25 +220,31 @@ const AdminUsersScreen = ({ navigation }: any) => {
         {!item.isVerified && (
           <TouchableOpacity
             style={styles.approveButton}
-            onPress={() => handleUserAction(item.id, 'approve')}
+            onPress={() => handleUserAction(item, 'approve')}
+            accessibilityRole="button"
+            accessibilityLabel={`Approve ${item.name}`}
           >
             <Ionicons name="checkmark" size={16} color="white" />
           </TouchableOpacity>
         )}
         <TouchableOpacity
           style={styles.suspendButton}
-          onPress={() => handleUserAction(item.id, 'suspend')}
+          onPress={() => handleUserAction(item, 'suspend')}
+          accessibilityRole="button"
+          accessibilityLabel={`Suspend ${item.name}`}
         >
           <Ionicons name="pause" size={16} color="white" />
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.deleteButton}
-          onPress={() => handleUserAction(item.id, 'delete')}
+          onPress={() => handleUserAction(item, 'delete')}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${item.name}`}
         >
           <Ionicons name="trash" size={16} color="white" />
         </TouchableOpacity>
       </View>
-    </View>
+    </Card>
   );
 
   const renderFilter = ({ item }: { item: string }) => (
@@ -179,31 +266,45 @@ const AdminUsersScreen = ({ navigation }: any) => {
     </TouchableOpacity>
   );
 
+  if (loading) {
+    return <LoadingIndicator message="Loading users..." />;
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#2196F3" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>User Management</Text>
-        <TouchableOpacity style={styles.exportButton}>
+        <TouchableOpacity
+          style={styles.exportButton}
+          accessibilityRole="button"
+          accessibilityLabel="Export users"
+        >
           <Ionicons name="download" size={24} color="#2196F3" />
         </TouchableOpacity>
       </View>
+
+      {errorMessage && <ErrorBanner message={errorMessage} />}
 
       <View style={styles.searchContainer}>
         <View style={styles.searchInputContainer}>
           <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search users..."
+            placeholder="Search users by name..."
             value={searchQuery}
             onChangeText={setSearchQuery}
             placeholderTextColor="#999"
+            accessibilityLabel="Search users by name"
           />
+          {refetching && !loading && <ActivityIndicator size="small" color="#2196F3" />}
         </View>
       </View>
 
@@ -218,20 +319,25 @@ const AdminUsersScreen = ({ navigation }: any) => {
       />
 
       <FlatList
-        data={filteredUsers}
+        data={users}
         renderItem={renderUser}
         keyExtractor={(item) => item.id}
         style={styles.usersList}
         contentContainerStyle={styles.usersContainer}
         showsVerticalScrollIndicator={false}
+        onEndReachedThreshold={0.4}
+        onEndReached={hasMore ? fetchMoreUsers : undefined}
+        ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footerLoader} /> : null}
         ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Ionicons name="people-outline" size={64} color="#BDBDBD" />
-            <Text style={styles.emptyStateTitle}>No users found</Text>
-            <Text style={styles.emptyStateText}>
-              Try adjusting your search criteria
-            </Text>
-          </View>
+          <EmptyState
+            icon="people-outline"
+            title="No users found"
+            message={
+              searchQuery.trim()
+                ? `No users found whose name starts with "${searchQuery.trim()}". Search matches the start of a name, not the middle.`
+                : 'Try adjusting your search criteria'
+            }
+          />
         }
       />
     </View>
@@ -239,6 +345,9 @@ const AdminUsersScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
+  footerLoader: {
+    marginVertical: 20,
+  },
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',
@@ -315,16 +424,11 @@ const styles = StyleSheet.create({
   usersContainer: {
     padding: 20,
   },
+  // Base card visuals (background, radius, shadow) now come from the
+  // shared <Card> component; this only adds the list-spacing this screen
+  // needs.
   userCard: {
-    backgroundColor: 'white',
-    borderRadius: 12,
-    padding: 15,
     marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
   },
   userInfo: {
     flexDirection: 'row',
@@ -396,22 +500,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#F44336',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  emptyStateTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginTop: 15,
-    marginBottom: 5,
-  },
-  emptyStateText: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
   },
 });
 

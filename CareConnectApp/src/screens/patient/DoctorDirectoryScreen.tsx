@@ -1,28 +1,34 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   TouchableOpacity,
   StyleSheet,
   TextInput,
   FlatList,
   Image,
-  Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { CompositeScreenProps } from '@react-navigation/native';
+import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { StackScreenProps } from '@react-navigation/stack';
 import { Doctor } from '../../types';
+import { fetchApprovedDoctors, ServiceError } from '../../services';
+import { PatientTabParamList, RootStackParamList } from '../../navigation/types';
 
-const { width } = Dimensions.get('window');
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<PatientTabParamList, 'Doctors'>,
+  StackScreenProps<RootStackParamList>
+>;
 
-const DoctorDirectoryScreen = ({ navigation }: any) => {
+const DoctorDirectoryScreen = ({ navigation }: Props) => {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [filteredDoctors, setFilteredDoctors] = useState<Doctor[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSpecialty, setSelectedSpecialty] = useState('All');
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const specialties = [
     'All',
@@ -38,44 +44,27 @@ const DoctorDirectoryScreen = ({ navigation }: any) => {
     'General Medicine',
   ];
 
-  useEffect(() => {
-    fetchDoctors();
-  }, []);
-
-  useEffect(() => {
-    filterDoctors();
-  }, [searchQuery, selectedSpecialty, doctors]);
-
-  const fetchDoctors = async () => {
+  const fetchDoctors = useCallback(async () => {
+    setErrorMessage(null);
     try {
-      const doctorsRef = collection(db, 'users');
-      const q = query(
-        doctorsRef,
-        where('role', '==', 'doctor'),
-        where('isApproved', '==', true)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const doctorsData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt.toDate(),
-        updatedAt: doc.data().updatedAt.toDate(),
-      })) as Doctor[];
-      
+      const doctorsData = await fetchApprovedDoctors();
       setDoctors(doctorsData);
     } catch (error) {
-      console.error('Error fetching doctors:', error);
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to load doctors.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const filterDoctors = () => {
+  useEffect(() => {
+    fetchDoctors();
+  }, [fetchDoctors]);
+
+  const filterDoctors = useCallback(() => {
     let filtered = doctors;
 
     if (selectedSpecialty !== 'All') {
-      filtered = filtered.filter(doctor => 
+      filtered = filtered.filter(doctor =>
         doctor.specialty.toLowerCase().includes(selectedSpecialty.toLowerCase())
       );
     }
@@ -89,13 +78,19 @@ const DoctorDirectoryScreen = ({ navigation }: any) => {
     }
 
     setFilteredDoctors(filtered);
-  };
+  }, [doctors, searchQuery, selectedSpecialty]);
+
+  useEffect(() => {
+    filterDoctors();
+  }, [filterDoctors]);
 
   const renderDoctorCard = ({ item }: { item: Doctor }) => (
-    <TouchableOpacity
-      style={styles.doctorCard}
-      onPress={() => navigation.navigate('DoctorProfile', { doctor: item })}
-    >
+    // Note: there is no standalone doctor-profile screen registered in
+    // RootStackParamList (it previously called
+    // navigate('DoctorProfile', ...), a route AppNavigator.tsx never
+    // defined, which would have crashed at runtime on tap). The card
+    // itself is informational; booking happens via the "Book" button below.
+    <View style={styles.doctorCard}>
       <View style={styles.doctorImageContainer}>
         {item.profileImage ? (
           <Image source={{ uri: item.profileImage }} style={styles.doctorImage} />
@@ -125,12 +120,14 @@ const DoctorDirectoryScreen = ({ navigation }: any) => {
           <TouchableOpacity
             style={styles.bookButton}
             onPress={() => navigation.navigate('AppointmentBooking', { doctor: item })}
+            accessibilityRole="button"
+            accessibilityLabel={`Book appointment with ${item.name}`}
           >
             <Text style={styles.bookButtonText}>Book</Text>
           </TouchableOpacity>
         </View>
       </View>
-    </TouchableOpacity>
+    </View>
   );
 
   const renderSpecialtyFilter = ({ item }: { item: string }) => (
@@ -152,14 +149,33 @@ const DoctorDirectoryScreen = ({ navigation }: any) => {
     </TouchableOpacity>
   );
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2196F3" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Find Doctors</Text>
-        <TouchableOpacity style={styles.filterButton}>
+        <TouchableOpacity
+          style={styles.filterButton}
+          accessibilityRole="button"
+          accessibilityLabel="Filter doctors"
+        >
           <Ionicons name="filter" size={24} color="#2196F3" />
         </TouchableOpacity>
       </View>
+
+      {errorMessage && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle" size={18} color="#F44336" />
+          <Text style={styles.errorBannerText}>{errorMessage}</Text>
+        </View>
+      )}
 
       <View style={styles.searchContainer}>
         <View style={styles.searchInputContainer}>
@@ -172,7 +188,11 @@ const DoctorDirectoryScreen = ({ navigation }: any) => {
             placeholderTextColor="#999"
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <TouchableOpacity
+              onPress={() => setSearchQuery('')}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+            >
               <Ionicons name="close-circle" size={20} color="#666" />
             </TouchableOpacity>
           )}
@@ -221,6 +241,25 @@ const DoctorDirectoryScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  errorBannerText: {
+    color: '#C62828',
+    fontSize: 14,
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',

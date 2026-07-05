@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,44 +7,66 @@ import {
   StyleSheet,
   Alert,
   RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { CompositeScreenProps } from '@react-navigation/native';
+import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { StackScreenProps } from '@react-navigation/stack';
 import { Appointment } from '../../types';
+import { useAuth } from '../../context/AuthContext';
+import { fetchAppointmentsForPatient, updateAppointmentStatus, ServiceError } from '../../services';
+import { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
+import { PatientTabParamList, RootStackParamList } from '../../navigation/types';
 
-const MyAppointmentsScreen = ({ navigation }: any) => {
+const PAGE_SIZE = 20;
+
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<PatientTabParamList, 'Appointments'>,
+  StackScreenProps<RootStackParamList>
+>;
+
+const MyAppointmentsScreen = ({ navigation }: Props) => {
+  const { user } = useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [cursor, setCursor] = useState<QueryDocumentSnapshot<DocumentData> | undefined>(undefined);
+  const [hasMore, setHasMore] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const fetchAppointments = useCallback(async () => {
+    if (!user?.id) return;
+    setErrorMessage(null);
+    try {
+      const page = await fetchAppointmentsForPatient(user.id, { pageSize: PAGE_SIZE });
+      setAppointments(page.appointments);
+      setCursor(page.nextCursor);
+      setHasMore(Boolean(page.nextCursor));
+    } catch (error) {
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to load appointments.');
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     fetchAppointments();
-  }, []);
+  }, [fetchAppointments]);
 
-  const fetchAppointments = async () => {
+  const fetchMoreAppointments = async () => {
+    if (!user?.id || !cursor || loadingMore) return;
+    setLoadingMore(true);
     try {
-      const appointmentsRef = collection(db, 'appointments');
-      const q = query(
-        appointmentsRef,
-        where('patientId', '==', 'current-user-id'), // This should come from auth context
-        orderBy('date', 'desc')
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const appointmentsData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().date.toDate(),
-        createdAt: doc.data().createdAt.toDate(),
-        updatedAt: doc.data().updatedAt.toDate(),
-      })) as Appointment[];
-      
-      setAppointments(appointmentsData);
+      const page = await fetchAppointmentsForPatient(user.id, { pageSize: PAGE_SIZE, after: cursor });
+      setAppointments((prev) => [...prev, ...page.appointments]);
+      setCursor(page.nextCursor);
+      setHasMore(Boolean(page.nextCursor));
     } catch (error) {
-      console.error('Error fetching appointments:', error);
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to load more appointments.');
     } finally {
-      setLoading(false);
+      setLoadingMore(false);
     }
   };
 
@@ -64,13 +86,11 @@ const MyAppointmentsScreen = ({ navigation }: any) => {
           text: 'Yes',
           onPress: async () => {
             try {
-              await updateDoc(doc(db, 'appointments', appointmentId), {
-                status: 'cancelled',
-                updatedAt: new Date(),
-              });
+              await updateAppointmentStatus(appointmentId, 'cancelled');
               fetchAppointments();
             } catch (error) {
-              Alert.alert('Error', 'Failed to cancel appointment');
+              const message = error instanceof ServiceError ? error.message : 'Failed to cancel appointment';
+              Alert.alert('Error', message);
             }
           },
         },
@@ -90,10 +110,12 @@ const MyAppointmentsScreen = ({ navigation }: any) => {
   };
 
   const renderAppointment = ({ item }: { item: Appointment }) => (
-    <TouchableOpacity
-      style={styles.appointmentCard}
-      onPress={() => navigation.navigate('AppointmentDetails', { appointment: item })}
-    >
+    // Note: this card is intentionally non-interactive as a whole. It
+    // previously called navigate('AppointmentDetails', ...), a screen name
+    // never registered in AppNavigator.tsx — tapping it would have crashed
+    // at runtime. The per-status action buttons below remain fully
+    // functional (Chat / Cancel).
+    <View style={styles.appointmentCard}>
       <View style={styles.appointmentHeader}>
         <View style={styles.appointmentIcon}>
           <Ionicons
@@ -127,20 +149,18 @@ const MyAppointmentsScreen = ({ navigation }: any) => {
 
       {item.status === 'confirmed' && (
         <View style={styles.appointmentActions}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('VideoCall', { appointment: item })}
-          >
-            <Ionicons name="videocam" size={16} color="#2196F3" />
-            <Text style={styles.actionButtonText}>Join Call</Text>
-          </TouchableOpacity>
-          
+          {/* Video calling was a non-functional UI shell (no WebRTC behind
+              it) and has been removed rather than shipped as a dead-end
+              button; messaging is the one real-time feature that actually
+              works, so this replaces the old "Join Call" action. */}
           <TouchableOpacity
             style={styles.actionButton}
             onPress={() => navigation.navigate('Chat', { appointment: item })}
+            accessibilityRole="button"
+            accessibilityLabel="Message doctor"
           >
             <Ionicons name="chatbubble" size={16} color="#4CAF50" />
-            <Text style={styles.actionButtonText}>Chat</Text>
+            <Text style={styles.actionButtonText}>Message</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -149,11 +169,13 @@ const MyAppointmentsScreen = ({ navigation }: any) => {
         <TouchableOpacity
           style={styles.cancelButton}
           onPress={() => handleCancelAppointment(item.id)}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel appointment"
         >
           <Text style={styles.cancelButtonText}>Cancel Appointment</Text>
         </TouchableOpacity>
       )}
-    </TouchableOpacity>
+    </View>
   );
 
   const upcomingAppointments = appointments.filter(
@@ -170,10 +192,19 @@ const MyAppointmentsScreen = ({ navigation }: any) => {
         <TouchableOpacity
           style={styles.bookButton}
           onPress={() => navigation.navigate('Doctors')}
+          accessibilityRole="button"
+          accessibilityLabel="Book a new appointment"
         >
           <Ionicons name="add" size={24} color="white" />
         </TouchableOpacity>
       </View>
+
+      {errorMessage && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle" size={18} color="#F44336" />
+          <Text style={styles.errorBannerText}>{errorMessage}</Text>
+        </View>
+      )}
 
       <FlatList
         data={[
@@ -186,20 +217,27 @@ const MyAppointmentsScreen = ({ navigation }: any) => {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
+        onEndReachedThreshold={0.4}
+        onEndReached={hasMore ? fetchMoreAppointments : undefined}
+        ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footerLoader} /> : null}
         ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Ionicons name="calendar-outline" size={64} color="#BDBDBD" />
-            <Text style={styles.emptyStateTitle}>No appointments yet</Text>
-            <Text style={styles.emptyStateText}>
-              Book your first appointment with a doctor
-            </Text>
-            <TouchableOpacity
-              style={styles.bookFirstButton}
-              onPress={() => navigation.navigate('Doctors')}
-            >
-              <Text style={styles.bookFirstButtonText}>Book Appointment</Text>
-            </TouchableOpacity>
-          </View>
+          !loading ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="calendar-outline" size={64} color="#BDBDBD" />
+              <Text style={styles.emptyStateTitle}>No appointments yet</Text>
+              <Text style={styles.emptyStateText}>
+                Book your first appointment with a doctor
+              </Text>
+              <TouchableOpacity
+                style={styles.bookFirstButton}
+                onPress={() => navigation.navigate('Doctors')}
+                accessibilityRole="button"
+                accessibilityLabel="Book your first appointment"
+              >
+                <Text style={styles.bookFirstButtonText}>Book Appointment</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null
         }
         contentContainerStyle={styles.listContainer}
       />
@@ -208,6 +246,22 @@ const MyAppointmentsScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  errorBannerText: {
+    color: '#C62828',
+    fontSize: 14,
+    flex: 1,
+  },
+  footerLoader: {
+    marginVertical: 20,
+  },
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',

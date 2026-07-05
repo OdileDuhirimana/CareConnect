@@ -10,11 +10,27 @@ import {
   TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { CompositeScreenProps } from '@react-navigation/native';
+import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { StackScreenProps } from '@react-navigation/stack';
 import { useAuth } from '../../context/AuthContext';
-import { signOut } from 'firebase/auth';
-import { auth } from '../../config/firebase';
+import { PatientTabParamList, RootStackParamList } from '../../navigation/types';
 
-const ProfileScreen = ({ navigation }: any) => {
+// Note: this screen is mounted as the "Profile" tab under both
+// PatientTabNavigator and DoctorTabNavigator, and as the "Profile" drawer
+// item under AdminDrawerNavigator (see AppNavigator.tsx). It never reads
+// route.params and never calls a sibling-tab-specific navigation method
+// (only navigation.navigate(...) to root-stack screens and goBack-free
+// menu navigation), so typing it against the Patient tab's shape is
+// sufficient — React Navigation's `component` prop only structurally
+// checks the `route` shape, which is identical (`{ name: 'Profile',
+// params: undefined }`) across all three parent navigators.
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<PatientTabParamList, 'Profile'>,
+  StackScreenProps<RootStackParamList>
+>;
+
+const ProfileScreen = ({ navigation }: Props) => {
   const { user, logout } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [editedName, setEditedName] = useState(user?.name || '');
@@ -96,11 +112,15 @@ const ProfileScreen = ({ navigation }: any) => {
                 <Ionicons name="person" size={40} color="#666" />
               </View>
             )}
-            <TouchableOpacity style={styles.editAvatarButton}>
+            <TouchableOpacity
+              style={styles.editAvatarButton}
+              accessibilityRole="button"
+              accessibilityLabel="Change profile photo"
+            >
               <Ionicons name="camera" size={16} color="white" />
             </TouchableOpacity>
           </View>
-          
+
           <View style={styles.userInfo}>
             {isEditing ? (
               <View style={styles.editContainer}>
@@ -109,6 +129,7 @@ const ProfileScreen = ({ navigation }: any) => {
                   value={editedName}
                   onChangeText={setEditedName}
                   placeholder="Full Name"
+                  accessibilityLabel="Full name"
                 />
                 <TextInput
                   style={styles.editInput}
@@ -116,17 +137,22 @@ const ProfileScreen = ({ navigation }: any) => {
                   onChangeText={setEditedPhone}
                   placeholder="Phone Number"
                   keyboardType="phone-pad"
+                  accessibilityLabel="Phone number"
                 />
                 <View style={styles.editActions}>
                   <TouchableOpacity
                     style={styles.cancelButton}
                     onPress={() => setIsEditing(false)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel editing profile"
                   >
                     <Text style={styles.cancelButtonText}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.saveButton}
                     onPress={handleSaveProfile}
+                    accessibilityRole="button"
+                    accessibilityLabel="Save profile"
                   >
                     <Text style={styles.saveButtonText}>Save</Text>
                   </TouchableOpacity>
@@ -137,7 +163,7 @@ const ProfileScreen = ({ navigation }: any) => {
                 <Text style={styles.userName}>{user?.name}</Text>
                 <Text style={styles.userEmail}>{user?.email}</Text>
                 <Text style={styles.userRole}>
-                  {user?.role?.charAt(0).toUpperCase() + user?.role?.slice(1)}
+                  {user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : ''}
                 </Text>
                 <View style={styles.verificationStatus}>
                   <Ionicons
@@ -163,6 +189,8 @@ const ProfileScreen = ({ navigation }: any) => {
               key={index}
               style={styles.menuItem}
               onPress={item.onPress}
+              accessibilityRole="button"
+              accessibilityLabel={item.title}
             >
               <View style={styles.menuItemLeft}>
                 <Ionicons name={item.icon as any} size={24} color="#666" />
@@ -174,7 +202,12 @@ const ProfileScreen = ({ navigation }: any) => {
         </View>
 
         <View style={styles.section}>
-          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={handleLogout}
+            accessibilityRole="button"
+            accessibilityLabel="Log out"
+          >
             <Ionicons name="log-out-outline" size={24} color="#F44336" />
             <Text style={styles.logoutButtonText}>Logout</Text>
           </TouchableOpacity>

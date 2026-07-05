@@ -14,10 +14,12 @@ import express from "express";
 import cors from "cors";
 
 export {approveDoctorRequest, deleteUserAccount} from "./adminApproval";
+export {analyzeSymptoms} from "./symptomChecker";
 export {createAppointment} from "./appointments";
 export {createWellnessEntry} from "./wellness";
 export {sendMessage} from "./messages";
 export {syncUserClaims} from "./customClaims";
+export {aggregateDailyAnalytics} from "./analytics";
 export {createPaymentIntent, stripeWebhook} from "./payments";
 
 // Start writing functions

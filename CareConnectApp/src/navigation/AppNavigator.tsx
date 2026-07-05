@@ -20,7 +20,6 @@ import HealthDashboardScreen from '../screens/patient/HealthDashboardScreen';
 import WellnessTrackerScreen from '../screens/patient/WellnessTrackerScreen';
 import MedicalRecordsScreen from '../screens/patient/MedicalRecordsScreen';
 import ChatScreen from '../screens/shared/ChatScreen';
-import VideoCallScreen from '../screens/shared/VideoCallScreen';
 import ProfileScreen from '../screens/shared/ProfileScreen';
 import SettingsScreen from '../screens/shared/SettingsScreen';
 
@@ -40,12 +39,20 @@ import AISymptomCheckerScreen from '../screens/shared/AISymptomCheckerScreen';
 import PharmacyScreen from '../screens/shared/PharmacyScreen';
 import PaymentScreen from '../screens/shared/PaymentScreen';
 
-const Stack = createStackNavigator();
-const Tab = createBottomTabNavigator();
-const Drawer = createDrawerNavigator();
+import {
+  AdminDrawerParamList,
+  DoctorTabParamList,
+  PatientTabParamList,
+  RootStackParamList,
+} from './types';
+
+const Stack = createStackNavigator<RootStackParamList>();
+const PatientTab = createBottomTabNavigator<PatientTabParamList>();
+const DoctorTab = createBottomTabNavigator<DoctorTabParamList>();
+const AdminDrawer = createDrawerNavigator<AdminDrawerParamList>();
 
 const PatientTabNavigator = () => (
-  <Tab.Navigator
+  <PatientTab.Navigator
     screenOptions={({ route }) => ({
       tabBarIcon: ({ focused, color, size }) => {
         let iconName: keyof typeof Ionicons.glyphMap;
@@ -70,16 +77,16 @@ const PatientTabNavigator = () => (
       tabBarInactiveTintColor: 'gray',
     })}
   >
-    <Tab.Screen name="Home" component={PatientHomeScreen} />
-    <Tab.Screen name="Doctors" component={DoctorDirectoryScreen} />
-    <Tab.Screen name="Appointments" component={MyAppointmentsScreen} />
-    <Tab.Screen name="Health" component={HealthDashboardScreen} />
-    <Tab.Screen name="Profile" component={ProfileScreen} />
-  </Tab.Navigator>
+    <PatientTab.Screen name="Home" component={PatientHomeScreen} />
+    <PatientTab.Screen name="Doctors" component={DoctorDirectoryScreen} />
+    <PatientTab.Screen name="Appointments" component={MyAppointmentsScreen} />
+    <PatientTab.Screen name="Health" component={HealthDashboardScreen} />
+    <PatientTab.Screen name="Profile" component={ProfileScreen} />
+  </PatientTab.Navigator>
 );
 
 const DoctorTabNavigator = () => (
-  <Tab.Navigator
+  <DoctorTab.Navigator
     screenOptions={({ route }) => ({
       tabBarIcon: ({ focused, color, size }) => {
         let iconName: keyof typeof Ionicons.glyphMap;
@@ -104,21 +111,21 @@ const DoctorTabNavigator = () => (
       tabBarInactiveTintColor: 'gray',
     })}
   >
-    <Tab.Screen name="Home" component={DoctorHomeScreen} />
-    <Tab.Screen name="Schedule" component={DoctorScheduleScreen} />
-    <Tab.Screen name="Patients" component={DoctorPatientsScreen} />
-    <Tab.Screen name="Analytics" component={DoctorAnalyticsScreen} />
-    <Tab.Screen name="Profile" component={ProfileScreen} />
-  </Tab.Navigator>
+    <DoctorTab.Screen name="Home" component={DoctorHomeScreen} />
+    <DoctorTab.Screen name="Schedule" component={DoctorScheduleScreen} />
+    <DoctorTab.Screen name="Patients" component={DoctorPatientsScreen} />
+    <DoctorTab.Screen name="Analytics" component={DoctorAnalyticsScreen} />
+    <DoctorTab.Screen name="Profile" component={ProfileScreen} />
+  </DoctorTab.Navigator>
 );
 
 const AdminDrawerNavigator = () => (
-  <Drawer.Navigator>
-    <Drawer.Screen name="Dashboard" component={AdminDashboardScreen} />
-    <Drawer.Screen name="Users" component={AdminUsersScreen} />
-    <Drawer.Screen name="Analytics" component={AdminAnalyticsScreen} />
-    <Drawer.Screen name="Profile" component={ProfileScreen} />
-  </Drawer.Navigator>
+  <AdminDrawer.Navigator>
+    <AdminDrawer.Screen name="Dashboard" component={AdminDashboardScreen} />
+    <AdminDrawer.Screen name="Users" component={AdminUsersScreen} />
+    <AdminDrawer.Screen name="Analytics" component={AdminAnalyticsScreen} />
+    <AdminDrawer.Screen name="Profile" component={ProfileScreen} />
+  </AdminDrawer.Navigator>
 );
 
 const AppNavigator = () => {
@@ -154,7 +161,6 @@ const AppNavigator = () => {
             {/* Shared Screens */}
             <Stack.Screen name="AppointmentBooking" component={AppointmentBookingScreen} />
             <Stack.Screen name="Chat" component={ChatScreen} />
-            <Stack.Screen name="VideoCall" component={VideoCallScreen} />
             <Stack.Screen name="WellnessTracker" component={WellnessTrackerScreen} />
             <Stack.Screen name="MedicalRecords" component={MedicalRecordsScreen} />
             <Stack.Screen name="AISymptomChecker" component={AISymptomCheckerScreen} />

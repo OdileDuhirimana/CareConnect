@@ -9,12 +9,24 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { CompositeScreenProps } from '@react-navigation/native';
+import { DrawerScreenProps } from '@react-navigation/drawer';
+import { StackScreenProps } from '@react-navigation/stack';
+import { AdminDrawerParamList, RootStackParamList } from '../../navigation/types';
 
 const { width } = Dimensions.get('window');
 
-const AdminAnalyticsScreen = ({ navigation }: any) => {
+type Props = CompositeScreenProps<
+  DrawerScreenProps<AdminDrawerParamList, 'Analytics'>,
+  StackScreenProps<RootStackParamList>
+>;
+
+const AdminAnalyticsScreen = ({ navigation }: Props) => {
   const [selectedPeriod, setSelectedPeriod] = useState('month');
-  const [analytics, setAnalytics] = useState({
+  // Illustrative static numbers (see README "Known Limitations" — there is
+  // no live analytics aggregation backend yet), so there is intentionally
+  // no setter: this is display data, not editable state.
+  const [analytics] = useState({
     totalUsers: 1250,
     totalDoctors: 85,
     totalAppointments: 3420,
@@ -51,7 +63,7 @@ const AdminAnalyticsScreen = ({ navigation }: any) => {
     </View>
   );
 
-  const renderChart = (title: string, data: any[]) => (
+  const renderChart = (title: string) => (
     <View style={styles.chartCard}>
       <Text style={styles.chartTitle}>{title}</Text>
       <View style={styles.chartPlaceholder}>
@@ -67,11 +79,17 @@ const AdminAnalyticsScreen = ({ navigation }: any) => {
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#2196F3" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>System Analytics</Text>
-        <TouchableOpacity style={styles.exportButton}>
+        <TouchableOpacity
+          style={styles.exportButton}
+          accessibilityRole="button"
+          accessibilityLabel="Export analytics"
+        >
           <Ionicons name="download" size={24} color="#2196F3" />
         </TouchableOpacity>
       </View>
@@ -87,6 +105,9 @@ const AdminAnalyticsScreen = ({ navigation }: any) => {
                 selectedPeriod === period.id && styles.periodButtonActive,
               ]}
               onPress={() => setSelectedPeriod(period.id)}
+              accessibilityRole="button"
+              accessibilityLabel={period.label}
+              accessibilityState={{ selected: selectedPeriod === period.id }}
             >
               <Text
                 style={[
@@ -168,10 +189,10 @@ const AdminAnalyticsScreen = ({ navigation }: any) => {
         {/* Charts */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Analytics & Trends</Text>
-          {renderChart('User Growth Over Time', [])}
-          {renderChart('Appointment Trends', [])}
-          {renderChart('Revenue Breakdown', [])}
-          {renderChart('Doctor Performance', [])}
+          {renderChart('User Growth Over Time')}
+          {renderChart('Appointment Trends')}
+          {renderChart('Revenue Breakdown')}
+          {renderChart('Doctor Performance')}
         </View>
 
         {/* User Demographics */}

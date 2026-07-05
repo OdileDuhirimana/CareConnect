@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,55 +6,47 @@ import {
   TouchableOpacity,
   StyleSheet,
   Dimensions,
-  Image,
+  ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { CompositeScreenProps } from '@react-navigation/native';
+import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { StackScreenProps } from '@react-navigation/stack';
 import { useAuth } from '../../context/AuthContext';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
-import { db } from '../../config/firebase';
 import { Appointment } from '../../types';
+import { fetchUpcomingAppointmentsForPatient, ServiceError } from '../../services';
+import { PatientTabParamList, RootStackParamList } from '../../navigation/types';
 
 const { width } = Dimensions.get('window');
 
-const PatientHomeScreen = ({ navigation }: any) => {
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<PatientTabParamList, 'Home'>,
+  StackScreenProps<RootStackParamList>
+>;
+
+const PatientHomeScreen = ({ navigation }: Props) => {
   const { user } = useAuth();
   const [upcomingAppointments, setUpcomingAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchUpcomingAppointments();
-  }, []);
-
-  const fetchUpcomingAppointments = async () => {
-    if (!user) return;
-    
+  const fetchUpcomingAppointments = useCallback(async () => {
+    if (!user?.id) return;
+    setErrorMessage(null);
     try {
-      const appointmentsRef = collection(db, 'appointments');
-      const q = query(
-        appointmentsRef,
-        where('patientId', '==', user.id),
-        where('status', 'in', ['confirmed', 'pending']),
-        orderBy('date', 'asc'),
-        limit(3)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const appointments = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().date.toDate(),
-        createdAt: doc.data().createdAt.toDate(),
-        updatedAt: doc.data().updatedAt.toDate(),
-      })) as Appointment[];
-      
+      const appointments = await fetchUpcomingAppointmentsForPatient(user.id, 3);
       setUpcomingAppointments(appointments);
     } catch (error) {
-      console.error('Error fetching appointments:', error);
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to load appointments.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchUpcomingAppointments();
+  }, [fetchUpcomingAppointments]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -96,6 +88,14 @@ const PatientHomeScreen = ({ navigation }: any) => {
     },
   ];
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2196F3" />
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       <LinearGradient colors={['#2196F3', '#E3F2FD']} style={styles.header}>
@@ -104,12 +104,23 @@ const PatientHomeScreen = ({ navigation }: any) => {
             <Text style={styles.greeting}>{getGreeting()},</Text>
             <Text style={styles.userName}>{user?.name}</Text>
           </View>
-          <TouchableOpacity style={styles.notificationButton}>
+          <TouchableOpacity
+            style={styles.notificationButton}
+            accessibilityRole="button"
+            accessibilityLabel="View notifications"
+          >
             <Ionicons name="notifications-outline" size={24} color="white" />
             <View style={styles.notificationBadge} />
           </TouchableOpacity>
         </View>
       </LinearGradient>
+
+      {errorMessage && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle" size={18} color="#F44336" />
+          <Text style={styles.errorBannerText}>{errorMessage}</Text>
+        </View>
+      )}
 
       <View style={styles.content}>
         {/* Quick Actions */}
@@ -141,11 +152,13 @@ const PatientHomeScreen = ({ navigation }: any) => {
           
           {upcomingAppointments.length > 0 ? (
             upcomingAppointments.map((appointment) => (
-              <TouchableOpacity
-                key={appointment.id}
-                style={styles.appointmentCard}
-                onPress={() => navigation.navigate('AppointmentDetails', { appointment })}
-              >
+              // Note: this card is intentionally non-interactive. There is
+              // no dedicated appointment-details screen in RootStackParamList
+              // (it was previously wired to navigate('AppointmentDetails', ...),
+              // a screen name never registered in AppNavigator.tsx, which
+              // would have crashed at runtime the first time a user tapped
+              // it). Full appointment details live on the Appointments tab.
+              <View key={appointment.id} style={styles.appointmentCard}>
                 <View style={styles.appointmentIcon}>
                   <Ionicons name="calendar-outline" size={24} color="#2196F3" />
                 </View>
@@ -160,8 +173,7 @@ const PatientHomeScreen = ({ navigation }: any) => {
                     Status: {appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1)}
                   </Text>
                 </View>
-                <Ionicons name="chevron-forward" size={20} color="#666" />
-              </TouchableOpacity>
+              </View>
             ))
           ) : (
             <View style={styles.emptyState}>
@@ -196,6 +208,25 @@ const PatientHomeScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  errorBannerText: {
+    color: '#C62828',
+    fontSize: 14,
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',

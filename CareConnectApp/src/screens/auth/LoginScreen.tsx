@@ -9,13 +9,16 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { StackScreenProps } from '@react-navigation/stack';
 import { useAuth } from '../../context/AuthContext';
+import { RootStackParamList } from '../../navigation/types';
 
-const LoginScreen = ({ navigation }: any) => {
+type Props = StackScreenProps<RootStackParamList, 'Login'>;
+
+const LoginScreen = ({ navigation }: Props) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -64,6 +67,7 @@ const LoginScreen = ({ navigation }: any) => {
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
+                accessibilityLabel="Email address"
               />
             </View>
 
@@ -75,10 +79,13 @@ const LoginScreen = ({ navigation }: any) => {
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry={!showPassword}
+                accessibilityLabel="Password"
               />
               <TouchableOpacity
                 onPress={() => setShowPassword(!showPassword)}
                 style={styles.eyeIcon}
+                accessibilityRole="button"
+                accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
               >
                 <Ionicons
                   name={showPassword ? 'eye-outline' : 'eye-off-outline'}
@@ -91,6 +98,8 @@ const LoginScreen = ({ navigation }: any) => {
             <TouchableOpacity
               style={styles.forgotPassword}
               onPress={() => navigation.navigate('ForgotPassword')}
+              accessibilityRole="button"
+              accessibilityLabel="Forgot password"
             >
               <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
             </TouchableOpacity>
@@ -99,6 +108,8 @@ const LoginScreen = ({ navigation }: any) => {
               style={[styles.loginButton, loading && styles.loginButtonDisabled]}
               onPress={handleLogin}
               disabled={loading}
+              accessibilityRole="button"
+              accessibilityLabel="Sign in"
             >
               <Text style={styles.loginButtonText}>
                 {loading ? 'Signing In...' : 'Sign In'}
@@ -114,6 +125,8 @@ const LoginScreen = ({ navigation }: any) => {
             <TouchableOpacity
               style={styles.registerButton}
               onPress={() => navigation.navigate('Register')}
+              accessibilityRole="button"
+              accessibilityLabel="Create new account"
             >
               <Text style={styles.registerButtonText}>Create New Account</Text>
             </TouchableOpacity>

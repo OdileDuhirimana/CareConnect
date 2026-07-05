@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,78 +6,61 @@ import {
   TouchableOpacity,
   StyleSheet,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
-import { db } from '../../config/firebase';
-import { Appointment } from '../../types';
+import { CompositeScreenProps } from '@react-navigation/native';
+import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { StackScreenProps } from '@react-navigation/stack';
+import { Appointment, Doctor } from '../../types';
+import { useAuth } from '../../context/AuthContext';
+import { fetchAppointmentsForDoctorOnDate, fetchUpcomingAppointmentsForDoctor, ServiceError } from '../../services';
+import { DoctorTabParamList, RootStackParamList } from '../../navigation/types';
 
 const { width } = Dimensions.get('window');
 
-const DoctorHomeScreen = ({ navigation }: any) => {
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<DoctorTabParamList, 'Home'>,
+  StackScreenProps<RootStackParamList>
+>;
+
+const DoctorHomeScreen = ({ navigation }: Props) => {
+  const { user } = useAuth();
   const [todayAppointments, setTodayAppointments] = useState<Appointment[]>([]);
   const [upcomingAppointments, setUpcomingAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchAppointments();
-  }, []);
-
-  const fetchAppointments = async () => {
+  const fetchAppointments = useCallback(async () => {
+    if (!user?.id) return;
+    setErrorMessage(null);
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      
+
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
 
-      // Fetch today's appointments
-      const todayRef = collection(db, 'appointments');
-      const todayQuery = query(
-        todayRef,
-        where('doctorId', '==', 'current-doctor-id'), // This should come from auth context
-        where('date', '>=', today),
-        where('date', '<', tomorrow),
-        orderBy('time', 'asc')
-      );
-      
-      const todaySnapshot = await getDocs(todayQuery);
-      const todayData = todaySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().date.toDate(),
-        createdAt: doc.data().createdAt.toDate(),
-        updatedAt: doc.data().updatedAt.toDate(),
-      })) as Appointment[];
-      
-      setTodayAppointments(todayData);
+      const todayIso = today.toISOString().split('T')[0];
 
-      // Fetch upcoming appointments
-      const upcomingQuery = query(
-        todayRef,
-        where('doctorId', '==', 'current-doctor-id'),
-        where('date', '>=', tomorrow),
-        orderBy('date', 'asc'),
-        limit(5)
-      );
-      
-      const upcomingSnapshot = await getDocs(upcomingQuery);
-      const upcomingData = upcomingSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().date.toDate(),
-        createdAt: doc.data().createdAt.toDate(),
-        updatedAt: doc.data().updatedAt.toDate(),
-      })) as Appointment[];
-      
-      setUpcomingAppointments(upcomingData);
+      const [todayData, upcomingPage] = await Promise.all([
+        fetchAppointmentsForDoctorOnDate(user.id, todayIso),
+        fetchUpcomingAppointmentsForDoctor(user.id, tomorrow, { pageSize: 5 }),
+      ]);
+
+      setTodayAppointments(todayData);
+      setUpcomingAppointments(upcomingPage.appointments);
     } catch (error) {
-      console.error('Error fetching appointments:', error);
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to load appointments.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchAppointments();
+  }, [fetchAppointments]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -152,21 +135,40 @@ const DoctorHomeScreen = ({ navigation }: any) => {
     </TouchableOpacity>
   );
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2196F3" />
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       <LinearGradient colors={['#2196F3', '#E3F2FD']} style={styles.header}>
         <View style={styles.headerContent}>
           <View>
             <Text style={styles.greeting}>{getGreeting()},</Text>
-            <Text style={styles.doctorName}>Dr. Smith</Text>
-            <Text style={styles.doctorSpecialty}>Cardiologist</Text>
+            <Text style={styles.doctorName}>{user?.name ?? 'Doctor'}</Text>
+            <Text style={styles.doctorSpecialty}>{(user as Doctor | null)?.specialty ?? ''}</Text>
           </View>
-          <TouchableOpacity style={styles.notificationButton}>
+          <TouchableOpacity
+            style={styles.notificationButton}
+            accessibilityRole="button"
+            accessibilityLabel="View notifications"
+          >
             <Ionicons name="notifications-outline" size={24} color="white" />
             <View style={styles.notificationBadge} />
           </TouchableOpacity>
         </View>
       </LinearGradient>
+
+      {errorMessage && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle" size={18} color="#F44336" />
+          <Text style={styles.errorBannerText}>{errorMessage}</Text>
+        </View>
+      )}
 
       <View style={styles.content}>
         {/* Quick Actions */}
@@ -190,7 +192,7 @@ const DoctorHomeScreen = ({ navigation }: any) => {
         {/* Today's Appointments */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Today's Appointments</Text>
+            <Text style={styles.sectionTitle}>Today&apos;s Appointments</Text>
             <TouchableOpacity onPress={() => navigation.navigate('Schedule')}>
               <Text style={styles.seeAllText}>See All</Text>
             </TouchableOpacity>
@@ -221,7 +223,7 @@ const DoctorHomeScreen = ({ navigation }: any) => {
 
         {/* Performance Summary */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>This Week's Performance</Text>
+          <Text style={styles.sectionTitle}>This Week&apos;s Performance</Text>
           <View style={styles.performanceGrid}>
             <View style={styles.performanceCard}>
               <Text style={styles.performanceValue}>24</Text>
@@ -243,6 +245,25 @@ const DoctorHomeScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  errorBannerText: {
+    color: '#C62828',
+    fontSize: 14,
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',

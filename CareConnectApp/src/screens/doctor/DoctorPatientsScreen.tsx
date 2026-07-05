@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,45 +6,42 @@ import {
   TouchableOpacity,
   StyleSheet,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { CompositeScreenProps } from '@react-navigation/native';
+import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { StackScreenProps } from '@react-navigation/stack';
 import { Patient } from '../../types';
+import { fetchPatients as fetchPatientsService, ServiceError } from '../../services';
+import { DoctorTabParamList, RootStackParamList } from '../../navigation/types';
 
-const DoctorPatientsScreen = ({ navigation }: any) => {
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<DoctorTabParamList, 'Patients'>,
+  StackScreenProps<RootStackParamList>
+>;
+
+const DoctorPatientsScreen = ({ navigation }: Props) => {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchPatients();
-  }, []);
-
-  const fetchPatients = async () => {
+  const fetchPatients = useCallback(async () => {
+    setErrorMessage(null);
     try {
-      const patientsRef = collection(db, 'users');
-      const q = query(
-        patientsRef,
-        where('role', '==', 'patient'),
-        orderBy('name', 'asc')
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const patientsData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt.toDate(),
-        updatedAt: doc.data().updatedAt.toDate(),
-      })) as Patient[];
-      
+      const patientsData = await fetchPatientsService();
       setPatients(patientsData);
     } catch (error) {
-      console.error('Error fetching patients:', error);
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to load patients.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchPatients();
+  }, [fetchPatients]);
 
   const getFilteredPatients = () => {
     if (!searchQuery.trim()) return patients;
@@ -75,6 +72,8 @@ const DoctorPatientsScreen = ({ navigation }: any) => {
           onPress={() => {
             // Navigate to chat
           }}
+          accessibilityRole="button"
+          accessibilityLabel={`Chat with ${item.name}`}
         >
           <Ionicons name="chatbubble" size={16} color="#2196F3" />
         </TouchableOpacity>
@@ -83,6 +82,8 @@ const DoctorPatientsScreen = ({ navigation }: any) => {
           onPress={() => {
             // Navigate to medical records
           }}
+          accessibilityRole="button"
+          accessibilityLabel={`View medical records for ${item.name}`}
         >
           <Ionicons name="medical" size={16} color="#4CAF50" />
         </TouchableOpacity>
@@ -90,20 +91,41 @@ const DoctorPatientsScreen = ({ navigation }: any) => {
     </TouchableOpacity>
   );
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2196F3" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#2196F3" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Patients</Text>
-        <TouchableOpacity style={styles.filterButton}>
+        <TouchableOpacity
+          style={styles.filterButton}
+          accessibilityRole="button"
+          accessibilityLabel="Filter patients"
+        >
           <Ionicons name="filter" size={24} color="#2196F3" />
         </TouchableOpacity>
       </View>
+
+      {errorMessage && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle" size={18} color="#F44336" />
+          <Text style={styles.errorBannerText}>{errorMessage}</Text>
+        </View>
+      )}
 
       <View style={styles.searchContainer}>
         <View style={styles.searchInputContainer}>
@@ -140,6 +162,25 @@ const DoctorPatientsScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  errorBannerText: {
+    color: '#C62828',
+    fontSize: 14,
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',

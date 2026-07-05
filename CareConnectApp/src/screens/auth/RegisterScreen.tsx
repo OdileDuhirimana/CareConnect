@@ -12,10 +12,14 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { StackScreenProps } from '@react-navigation/stack';
 import { useAuth } from '../../context/AuthContext';
 import { User } from '../../types';
+import { RootStackParamList } from '../../navigation/types';
 
-const RegisterScreen = ({ navigation }: any) => {
+type Props = StackScreenProps<RootStackParamList, 'Register'>;
+
+const RegisterScreen = ({ navigation }: Props) => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -96,6 +100,8 @@ const RegisterScreen = ({ navigation }: any) => {
                   formData.role === 'patient' && styles.roleButtonActive,
                 ]}
                 onPress={() => handleInputChange('role', 'patient')}
+                accessibilityRole="button"
+                accessibilityLabel="Register as patient"
               >
                 <Ionicons
                   name="person-outline"
@@ -118,6 +124,8 @@ const RegisterScreen = ({ navigation }: any) => {
                   formData.role === 'doctor' && styles.roleButtonActive,
                 ]}
                 onPress={() => handleInputChange('role', 'doctor')}
+                accessibilityRole="button"
+                accessibilityLabel="Register as doctor"
               >
                 <Ionicons
                   name="medical-outline"
@@ -143,6 +151,7 @@ const RegisterScreen = ({ navigation }: any) => {
                 value={formData.name}
                 onChangeText={(value) => handleInputChange('name', value)}
                 autoCapitalize="words"
+                accessibilityLabel="Full name"
               />
             </View>
 
@@ -156,6 +165,7 @@ const RegisterScreen = ({ navigation }: any) => {
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
+                accessibilityLabel="Email address"
               />
             </View>
 
@@ -167,6 +177,7 @@ const RegisterScreen = ({ navigation }: any) => {
                 value={formData.phone}
                 onChangeText={(value) => handleInputChange('phone', value)}
                 keyboardType="phone-pad"
+                accessibilityLabel="Phone number"
               />
             </View>
 
@@ -178,10 +189,13 @@ const RegisterScreen = ({ navigation }: any) => {
                 value={formData.password}
                 onChangeText={(value) => handleInputChange('password', value)}
                 secureTextEntry={!showPassword}
+                accessibilityLabel="Password"
               />
               <TouchableOpacity
                 onPress={() => setShowPassword(!showPassword)}
                 style={styles.eyeIcon}
+                accessibilityRole="button"
+                accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
               >
                 <Ionicons
                   name={showPassword ? 'eye-outline' : 'eye-off-outline'}
@@ -199,10 +213,13 @@ const RegisterScreen = ({ navigation }: any) => {
                 value={formData.confirmPassword}
                 onChangeText={(value) => handleInputChange('confirmPassword', value)}
                 secureTextEntry={!showConfirmPassword}
+                accessibilityLabel="Confirm password"
               />
               <TouchableOpacity
                 onPress={() => setShowConfirmPassword(!showConfirmPassword)}
                 style={styles.eyeIcon}
+                accessibilityRole="button"
+                accessibilityLabel={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
               >
                 <Ionicons
                   name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'}
@@ -216,6 +233,8 @@ const RegisterScreen = ({ navigation }: any) => {
               style={[styles.registerButton, loading && styles.registerButtonDisabled]}
               onPress={handleRegister}
               disabled={loading}
+              accessibilityRole="button"
+              accessibilityLabel="Create account"
             >
               <Text style={styles.registerButtonText}>
                 {loading ? 'Creating Account...' : 'Create Account'}
@@ -225,6 +244,8 @@ const RegisterScreen = ({ navigation }: any) => {
             <TouchableOpacity
               style={styles.loginButton}
               onPress={() => navigation.navigate('Login')}
+              accessibilityRole="button"
+              accessibilityLabel="Already have an account, sign in"
             >
               <Text style={styles.loginButtonText}>Already have an account? Sign In</Text>
             </TouchableOpacity>

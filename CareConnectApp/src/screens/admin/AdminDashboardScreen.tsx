@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,23 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { CompositeScreenProps } from '@react-navigation/native';
+import { DrawerScreenProps } from '@react-navigation/drawer';
+import { StackScreenProps } from '@react-navigation/stack';
+import { AdminDrawerParamList, RootStackParamList } from '../../navigation/types';
 
 const { width } = Dimensions.get('window');
 
-const AdminDashboardScreen = ({ navigation }: any) => {
-  const [dashboardData, setDashboardData] = useState({
+type Props = CompositeScreenProps<
+  DrawerScreenProps<AdminDrawerParamList, 'Dashboard'>,
+  StackScreenProps<RootStackParamList>
+>;
+
+const AdminDashboardScreen = ({ navigation }: Props) => {
+  // Illustrative static numbers (see README "Known Limitations" — there is
+  // no live analytics aggregation backend yet), so there is intentionally
+  // no setter: this is display data, not editable state.
+  const [dashboardData] = useState({
     totalUsers: 1250,
     totalDoctors: 85,
     totalAppointments: 3420,
@@ -36,7 +48,12 @@ const AdminDashboardScreen = ({ navigation }: any) => {
   );
 
   const renderQuickAction = (title: string, subtitle: string, icon: string, color: string, onPress: () => void) => (
-    <TouchableOpacity style={styles.quickActionCard} onPress={onPress}>
+    <TouchableOpacity
+      style={styles.quickActionCard}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+    >
       <View style={[styles.quickActionIcon, { backgroundColor: color }]}>
         <Ionicons name={icon as any} size={24} color="white" />
       </View>
@@ -49,7 +66,11 @@ const AdminDashboardScreen = ({ navigation }: any) => {
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Admin Dashboard</Text>
-        <TouchableOpacity style={styles.notificationButton}>
+        <TouchableOpacity
+          style={styles.notificationButton}
+          accessibilityRole="button"
+          accessibilityLabel="View notifications"
+        >
           <Ionicons name="notifications-outline" size={24} color="#2196F3" />
           <View style={styles.notificationBadge} />
         </TouchableOpacity>
@@ -190,7 +211,11 @@ const AdminDashboardScreen = ({ navigation }: any) => {
             <Text style={styles.approvalSubtitle}>
               {dashboardData.pendingApprovals} doctor applications waiting for approval
             </Text>
-            <TouchableOpacity style={styles.approvalButton}>
+            <TouchableOpacity
+              style={styles.approvalButton}
+              accessibilityRole="button"
+              accessibilityLabel="Review doctor applications"
+            >
               <Text style={styles.approvalButtonText}>Review Applications</Text>
             </TouchableOpacity>
           </View>
@@ -207,7 +232,11 @@ const AdminDashboardScreen = ({ navigation }: any) => {
             <Text style={styles.alertText}>
               A new system update is available. Schedule maintenance window to apply updates.
             </Text>
-            <TouchableOpacity style={styles.alertButton}>
+            <TouchableOpacity
+              style={styles.alertButton}
+              accessibilityRole="button"
+              accessibilityLabel="Schedule system update"
+            >
               <Text style={styles.alertButtonText}>Schedule Update</Text>
             </TouchableOpacity>
           </View>

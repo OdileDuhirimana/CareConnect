@@ -1,52 +1,46 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   FlatList,
   TouchableOpacity,
   StyleSheet,
-  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { StackScreenProps } from '@react-navigation/stack';
 import { MedicalRecord } from '../../types';
+import { useAuth } from '../../context/AuthContext';
+import { fetchMedicalRecordsForPatient, ServiceError } from '../../services';
+import { RootStackParamList } from '../../navigation/types';
 
-const MedicalRecordsScreen = ({ navigation }: any) => {
+type Props = StackScreenProps<RootStackParamList, 'MedicalRecords'>;
+
+const MedicalRecordsScreen = ({ navigation }: Props) => {
+  const { user } = useAuth();
   const [records, setRecords] = useState<MedicalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedFilter, setSelectedFilter] = useState('All');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const filters = ['All', 'Prescription', 'Lab Result', 'Scan', 'Vaccination', 'Other'];
 
-  useEffect(() => {
-    fetchRecords();
-  }, []);
-
-  const fetchRecords = async () => {
+  const fetchRecords = useCallback(async () => {
+    if (!user?.id) return;
+    setErrorMessage(null);
     try {
-      const recordsRef = collection(db, 'medical_records');
-      const q = query(
-        recordsRef,
-        where('patientId', '==', 'current-user-id'), // This should come from auth context
-        orderBy('date', 'desc')
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const recordsData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().date.toDate(),
-        createdAt: doc.data().createdAt.toDate(),
-      })) as MedicalRecord[];
-      
+      const recordsData = await fetchMedicalRecordsForPatient(user.id);
       setRecords(recordsData);
     } catch (error) {
-      console.error('Error fetching records:', error);
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to load medical records.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchRecords();
+  }, [fetchRecords]);
 
   const getFilteredRecords = () => {
     if (selectedFilter === 'All') return records;
@@ -116,20 +110,41 @@ const MedicalRecordsScreen = ({ navigation }: any) => {
     </TouchableOpacity>
   );
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2196F3" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#2196F3" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Medical Records</Text>
-        <TouchableOpacity style={styles.addButton}>
+        <TouchableOpacity
+          style={styles.addButton}
+          accessibilityRole="button"
+          accessibilityLabel="Add medical record"
+        >
           <Ionicons name="add" size={24} color="#2196F3" />
         </TouchableOpacity>
       </View>
+
+      {errorMessage && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle" size={18} color="#F44336" />
+          <Text style={styles.errorBannerText}>{errorMessage}</Text>
+        </View>
+      )}
 
       <FlatList
         data={filters}
@@ -163,6 +178,25 @@ const MedicalRecordsScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  errorBannerText: {
+    color: '#C62828',
+    fontSize: 14,
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',

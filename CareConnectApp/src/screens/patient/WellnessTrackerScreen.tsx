@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,17 +7,19 @@ import {
   StyleSheet,
   TextInput,
   Alert,
-  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { collection, addDoc, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { StackScreenProps } from '@react-navigation/stack';
 import { WellnessEntry } from '../../types';
+import { useAuth } from '../../context/AuthContext';
+import { createWellnessEntry, fetchRecentWellnessEntries, ServiceError } from '../../services';
+import { RootStackParamList } from '../../navigation/types';
 
-const { width } = Dimensions.get('window');
+type Props = StackScreenProps<RootStackParamList, 'WellnessTracker'>;
 
-const WellnessTrackerScreen = ({ navigation }: any) => {
+const WellnessTrackerScreen = ({ navigation }: Props) => {
+  const { user } = useAuth();
   const [mood, setMood] = useState(3);
   const [energy, setEnergy] = useState(3);
   const [stress, setStress] = useState(3);
@@ -58,34 +60,26 @@ const WellnessTrackerScreen = ({ navigation }: any) => {
     'Cough', 'Sore Throat', 'Runny Nose', 'Insomnia', 'Anxiety',
   ];
 
-  useEffect(() => {
-    fetchRecentEntries();
-  }, []);
-
-  const fetchRecentEntries = async () => {
+  const fetchRecentEntries = useCallback(async () => {
+    if (!user?.id) return;
     try {
-      const entriesRef = collection(db, 'wellness_entries');
-      const q = query(
-        entriesRef,
-        where('userId', '==', 'current-user-id'), // This should come from auth context
-        orderBy('date', 'desc'),
-        limit(7)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const entries = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().date.toDate(),
-      })) as WellnessEntry[];
-      
+      const entries = await fetchRecentWellnessEntries(user.id);
       setRecentEntries(entries);
     } catch (error) {
-      console.error('Error fetching wellness entries:', error);
+      const message = error instanceof ServiceError ? error.message : 'Failed to load wellness entries.';
+      Alert.alert('Error', message);
     }
-  };
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchRecentEntries();
+  }, [fetchRecentEntries]);
 
   const handleSaveEntry = async () => {
+    if (!user?.id) {
+      Alert.alert('Error', 'You must be signed in to save a wellness entry.');
+      return;
+    }
     if (!mood || !energy || !stress) {
       Alert.alert('Error', 'Please rate your mood, energy, and stress levels');
       return;
@@ -93,26 +87,24 @@ const WellnessTrackerScreen = ({ navigation }: any) => {
 
     setLoading(true);
     try {
-      const entryData: Omit<WellnessEntry, 'id'> = {
-        userId: 'current-user-id', // This should come from auth context
-        date: new Date(),
+      await createWellnessEntry({
+        userId: user.id,
         mood,
         energy,
         stress,
         sleepHours,
         exerciseMinutes,
-        notes: notes.trim(),
+        notes,
         symptoms,
-      };
+      });
 
-      await addDoc(collection(db, 'wellness_entries'), entryData);
-      
       Alert.alert('Success', 'Wellness entry saved successfully!');
       setNotes('');
       setSymptoms([]);
       fetchRecentEntries();
     } catch (error) {
-      Alert.alert('Error', 'Failed to save wellness entry. Please try again.');
+      const message = error instanceof ServiceError ? error.message : 'Failed to save wellness entry. Please try again.';
+      Alert.alert('Error', message);
     } finally {
       setLoading(false);
     }
@@ -144,6 +136,9 @@ const WellnessTrackerScreen = ({ navigation }: any) => {
               { borderColor: option.color },
             ]}
             onPress={() => onValueChange(option.value)}
+            accessibilityRole="button"
+            accessibilityLabel={`${title}: ${option.label}`}
+            accessibilityState={{ selected: value === option.value }}
           >
             <Text style={styles.ratingEmoji}>{option.emoji}</Text>
             <Text style={[
@@ -164,9 +159,9 @@ const WellnessTrackerScreen = ({ navigation }: any) => {
         <Text style={styles.entryDate}>
           {entry.date.toLocaleDateString()}
         </Text>
-        <View style={styles.entryMood}>
+        <Text style={styles.entryMood}>
           {moodOptions.find(m => m.value === entry.mood)?.emoji}
-        </View>
+        </Text>
       </View>
       <View style={styles.entryStats}>
         <View style={styles.statItem}>
@@ -197,6 +192,8 @@ const WellnessTrackerScreen = ({ navigation }: any) => {
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#2196F3" />
         </TouchableOpacity>
@@ -223,6 +220,8 @@ const WellnessTrackerScreen = ({ navigation }: any) => {
                 <TouchableOpacity
                   style={styles.numberButton}
                   onPress={() => setSleepHours(Math.max(0, sleepHours - 0.5))}
+                  accessibilityRole="button"
+                  accessibilityLabel="Decrease sleep hours"
                 >
                   <Ionicons name="remove" size={20} color="#666" />
                 </TouchableOpacity>
@@ -230,6 +229,8 @@ const WellnessTrackerScreen = ({ navigation }: any) => {
                 <TouchableOpacity
                   style={styles.numberButton}
                   onPress={() => setSleepHours(Math.min(24, sleepHours + 0.5))}
+                  accessibilityRole="button"
+                  accessibilityLabel="Increase sleep hours"
                 >
                   <Ionicons name="add" size={20} color="#666" />
                 </TouchableOpacity>
@@ -242,6 +243,8 @@ const WellnessTrackerScreen = ({ navigation }: any) => {
                 <TouchableOpacity
                   style={styles.numberButton}
                   onPress={() => setExerciseMinutes(Math.max(0, exerciseMinutes - 15))}
+                  accessibilityRole="button"
+                  accessibilityLabel="Decrease exercise minutes"
                 >
                   <Ionicons name="remove" size={20} color="#666" />
                 </TouchableOpacity>
@@ -249,6 +252,8 @@ const WellnessTrackerScreen = ({ navigation }: any) => {
                 <TouchableOpacity
                   style={styles.numberButton}
                   onPress={() => setExerciseMinutes(Math.min(300, exerciseMinutes + 15))}
+                  accessibilityRole="button"
+                  accessibilityLabel="Increase exercise minutes"
                 >
                   <Ionicons name="add" size={20} color="#666" />
                 </TouchableOpacity>
@@ -268,6 +273,9 @@ const WellnessTrackerScreen = ({ navigation }: any) => {
                   symptoms.includes(symptom) && styles.symptomButtonSelected,
                 ]}
                 onPress={() => toggleSymptom(symptom)}
+                accessibilityRole="button"
+                accessibilityLabel={symptom}
+                accessibilityState={{ selected: symptoms.includes(symptom) }}
               >
                 <Text style={[
                   styles.symptomButtonText,
@@ -287,6 +295,7 @@ const WellnessTrackerScreen = ({ navigation }: any) => {
             placeholder="How are you feeling? Any other observations..."
             value={notes}
             onChangeText={setNotes}
+            accessibilityLabel="Additional notes"
             multiline
             numberOfLines={3}
             textAlignVertical="top"
@@ -297,6 +306,8 @@ const WellnessTrackerScreen = ({ navigation }: any) => {
           style={[styles.saveButton, loading && styles.saveButtonDisabled]}
           onPress={handleSaveEntry}
           disabled={loading}
+          accessibilityRole="button"
+          accessibilityLabel="Save wellness entry"
         >
           <LinearGradient
             colors={['#4CAF50', '#45A049']}

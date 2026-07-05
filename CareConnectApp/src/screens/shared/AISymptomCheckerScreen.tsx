@@ -7,22 +7,25 @@ import {
   StyleSheet,
   TextInput,
   Alert,
-  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StackScreenProps } from '@react-navigation/stack';
+import { analyzeSymptoms as analyzeSymptomsService, SymptomAnalysisResult, ServiceError } from '../../services';
+import { RootStackParamList } from '../../navigation/types';
 
-const { width } = Dimensions.get('window');
+type Props = StackScreenProps<RootStackParamList, 'AISymptomChecker'>;
 
-const AISymptomCheckerScreen = ({ navigation }: any) => {
+const AISymptomCheckerScreen = ({ navigation }: Props) => {
   const [symptoms, setSymptoms] = useState('');
   const [duration, setDuration] = useState('');
-  const [severity, setSeverity] = useState('');
+  const [severity, setSeverity] = useState<'mild' | 'moderate' | 'severe' | ''>('');
   const [additionalInfo, setAdditionalInfo] = useState('');
-  const [analysis, setAnalysis] = useState<any>(null);
+  const [analysis, setAnalysis] = useState<SymptomAnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const severityOptions = [
+  const severityOptions: { label: string; value: 'mild' | 'moderate' | 'severe'; color: string }[] = [
     { label: 'Mild', value: 'mild', color: '#4CAF50' },
     { label: 'Moderate', value: 'moderate', color: '#FF9800' },
     { label: 'Severe', value: 'severe', color: '#F44336' },
@@ -43,53 +46,38 @@ const AISymptomCheckerScreen = ({ navigation }: any) => {
     }
 
     setLoading(true);
-    
-    // Simulate AI analysis (in real app, this would call Gemini API)
-    setTimeout(() => {
-      const mockAnalysis = {
-        possibleConditions: [
-          {
-            name: 'Common Cold',
-            probability: 75,
-            description: 'Viral infection affecting the upper respiratory tract',
-          },
-          {
-            name: 'Allergic Rhinitis',
-            probability: 60,
-            description: 'Allergic reaction causing nasal congestion and sneezing',
-          },
-          {
-            name: 'Sinusitis',
-            probability: 45,
-            description: 'Inflammation of the sinuses',
-          },
-        ],
-        recommendations: [
-          'Get plenty of rest and stay hydrated',
-          'Use a humidifier to ease congestion',
-          'Consider over-the-counter pain relievers',
-          'Monitor your temperature regularly',
-        ],
-        suggestedSpecialists: [
-          'General Practitioner',
-          'ENT Specialist',
-          'Allergist',
-        ],
-        urgency: severity === 'severe' ? 'high' : severity === 'moderate' ? 'medium' : 'low',
-        confidence: 78,
-      };
-      
-      setAnalysis(mockAnalysis);
+    setErrorMessage(null);
+    try {
+      const result = await analyzeSymptomsService({
+        symptoms,
+        durationDescription: duration || undefined,
+        severity: severity || undefined,
+        additionalInfo: additionalInfo || undefined,
+      });
+      setAnalysis(result);
+    } catch (error) {
+      const message = error instanceof ServiceError ? error.message : 'Failed to analyze symptoms. Please try again.';
+      setErrorMessage(message);
+      Alert.alert('Error', message);
+    } finally {
       setLoading(false);
-    }, 2000);
+    }
   };
 
-  const renderConditionCard = (condition: any, index: number) => (
+  const likelihoodToPercent = (likelihood: 'low' | 'moderate' | 'high') => {
+    switch (likelihood) {
+      case 'high': return 80;
+      case 'moderate': return 50;
+      case 'low': return 20;
+    }
+  };
+
+  const renderConditionCard = (condition: SymptomAnalysisResult['possibleConditions'][number], index: number) => (
     <View key={index} style={styles.conditionCard}>
       <View style={styles.conditionHeader}>
         <Text style={styles.conditionName}>{condition.name}</Text>
         <View style={styles.probabilityContainer}>
-          <Text style={styles.probabilityText}>{condition.probability}%</Text>
+          <Text style={styles.probabilityText}>{condition.likelihood}</Text>
         </View>
       </View>
       <Text style={styles.conditionDescription}>{condition.description}</Text>
@@ -97,7 +85,7 @@ const AISymptomCheckerScreen = ({ navigation }: any) => {
         <View
           style={[
             styles.probabilityFill,
-            { width: `${condition.probability}%` },
+            { width: `${likelihoodToPercent(condition.likelihood)}%` },
           ]}
         />
       </View>
@@ -110,6 +98,8 @@ const AISymptomCheckerScreen = ({ navigation }: any) => {
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#2196F3" />
         </TouchableOpacity>
@@ -119,6 +109,20 @@ const AISymptomCheckerScreen = ({ navigation }: any) => {
 
       {!analysis ? (
         <View style={styles.formContainer}>
+          <View style={styles.aiNoticeContainer}>
+            <Ionicons name="information-circle-outline" size={18} color="#1976D2" />
+            <Text style={styles.aiNoticeText}>
+              Responses are generated by an AI model (Google Gemini) and are not a medical diagnosis.
+            </Text>
+          </View>
+
+          {errorMessage && (
+            <View style={styles.errorBanner}>
+              <Ionicons name="alert-circle" size={18} color="#F44336" />
+              <Text style={styles.errorBannerText}>{errorMessage}</Text>
+            </View>
+          )}
+
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Describe Your Symptoms</Text>
             <TextInput
@@ -220,9 +224,7 @@ const AISymptomCheckerScreen = ({ navigation }: any) => {
           <View style={styles.resultsHeader}>
             <Ionicons name="checkmark-circle" size={32} color="#4CAF50" />
             <Text style={styles.resultsTitle}>Analysis Complete</Text>
-            <Text style={styles.confidenceText}>
-              Confidence: {analysis.confidence}%
-            </Text>
+            <Text style={styles.confidenceText}>Generated by AI — not a diagnosis</Text>
           </View>
 
           <View style={styles.urgencyContainer}>
@@ -256,23 +258,32 @@ const AISymptomCheckerScreen = ({ navigation }: any) => {
             <Text style={styles.sectionTitle}>Suggested Specialists</Text>
             <View style={styles.specialistsContainer}>
               {analysis.suggestedSpecialists.map((specialist: string, index: number) => (
+                // Note: this previously called navigate('Doctors', { specialty }),
+                // but 'Doctors' is a tab inside PatientMain, not a root-stack
+                // screen, and DoctorDirectoryScreen never read a `specialty`
+                // route param anyway — the deep link would have silently
+                // failed at runtime. PatientMain is typed as taking no
+                // params (see RootStackParamList), so the honest fix is to
+                // return the user to the patient app, where they can open
+                // the doctor directory themselves, rather than pretend to
+                // pre-filter by specialty.
                 <TouchableOpacity
                   key={index}
                   style={styles.specialistButton}
-                  onPress={() => navigation.navigate('Doctors', { specialty: specialist })}
+                  onPress={() => navigation.navigate('PatientMain')}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Find a ${specialist}`}
                 >
                   <Ionicons name="medical-outline" size={20} color="#2196F3" />
                   <Text style={styles.specialistButtonText}>{specialist}</Text>
-                  </TouchableOpacity>
+                </TouchableOpacity>
               ))}
             </View>
           </View>
 
           <View style={styles.disclaimerContainer}>
             <Ionicons name="warning-outline" size={20} color="#FF9800" />
-            <Text style={styles.disclaimerText}>
-              This analysis is for informational purposes only and should not replace professional medical advice. Please consult a healthcare provider for proper diagnosis and treatment.
-            </Text>
+            <Text style={styles.disclaimerText}>{analysis.disclaimer}</Text>
           </View>
 
           <TouchableOpacity
@@ -294,6 +305,37 @@ const AISymptomCheckerScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
+  aiNoticeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E3F2FD',
+    padding: 12,
+    borderRadius: 12,
+    marginHorizontal: 20,
+    marginTop: 20,
+    gap: 8,
+  },
+  aiNoticeText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#1565C0',
+    lineHeight: 16,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    padding: 12,
+    borderRadius: 12,
+    marginHorizontal: 20,
+    marginTop: 12,
+    gap: 8,
+  },
+  errorBannerText: {
+    color: '#C62828',
+    fontSize: 14,
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,89 +6,73 @@ import {
   TouchableOpacity,
   StyleSheet,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { CompositeScreenProps } from '@react-navigation/native';
+import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { StackScreenProps } from '@react-navigation/stack';
 import { WellnessEntry, MedicalRecord } from '../../types';
+import { useAuth } from '../../context/AuthContext';
+import { fetchRecentWellnessEntries, fetchRecentMedicalRecords, ServiceError } from '../../services';
+import { PatientTabParamList, RootStackParamList } from '../../navigation/types';
 
 const { width } = Dimensions.get('window');
 
-const HealthDashboardScreen = ({ navigation }: any) => {
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<PatientTabParamList, 'Health'>,
+  StackScreenProps<RootStackParamList>
+>;
+
+const HealthDashboardScreen = ({ navigation }: Props) => {
+  const { user } = useAuth();
   const [wellnessEntries, setWellnessEntries] = useState<WellnessEntry[]>([]);
   const [medicalRecords, setMedicalRecords] = useState<MedicalRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchHealthData();
-  }, []);
-
-  const fetchHealthData = async () => {
+  const fetchHealthData = useCallback(async () => {
+    if (!user?.id) return;
+    setErrorMessage(null);
     try {
-      // Fetch wellness entries
-      const wellnessRef = collection(db, 'wellness_entries');
-      const wellnessQuery = query(
-        wellnessRef,
-        where('userId', '==', 'current-user-id'), // This should come from auth context
-        orderBy('date', 'desc'),
-        limit(7)
-      );
-      
-      const wellnessSnapshot = await getDocs(wellnessQuery);
-      const wellnessData = wellnessSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().date.toDate(),
-      })) as WellnessEntry[];
-      
+      const [wellnessData, recordsData] = await Promise.all([
+        fetchRecentWellnessEntries(user.id, 7),
+        fetchRecentMedicalRecords(user.id, 5),
+      ]);
       setWellnessEntries(wellnessData);
-
-      // Fetch medical records
-      const recordsRef = collection(db, 'medical_records');
-      const recordsQuery = query(
-        recordsRef,
-        where('patientId', '==', 'current-user-id'), // This should come from auth context
-        orderBy('date', 'desc'),
-        limit(5)
-      );
-      
-      const recordsSnapshot = await getDocs(recordsQuery);
-      const recordsData = recordsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().date.toDate(),
-        createdAt: doc.data().createdAt.toDate(),
-      })) as MedicalRecord[];
-      
       setMedicalRecords(recordsData);
     } catch (error) {
-      console.error('Error fetching health data:', error);
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to load health data.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchHealthData();
+  }, [fetchHealthData]);
 
   const getAverageMood = () => {
-    if (wellnessEntries.length === 0) return 0;
+    if (wellnessEntries.length === 0) return '0';
     const sum = wellnessEntries.reduce((acc, entry) => acc + entry.mood, 0);
     return (sum / wellnessEntries.length).toFixed(1);
   };
 
   const getAverageEnergy = () => {
-    if (wellnessEntries.length === 0) return 0;
+    if (wellnessEntries.length === 0) return '0';
     const sum = wellnessEntries.reduce((acc, entry) => acc + entry.energy, 0);
     return (sum / wellnessEntries.length).toFixed(1);
   };
 
   const getAverageStress = () => {
-    if (wellnessEntries.length === 0) return 0;
+    if (wellnessEntries.length === 0) return '0';
     const sum = wellnessEntries.reduce((acc, entry) => acc + entry.stress, 0);
     return (sum / wellnessEntries.length).toFixed(1);
   };
 
   const getAverageSleep = () => {
-    if (wellnessEntries.length === 0) return 0;
+    if (wellnessEntries.length === 0) return '0';
     const sum = wellnessEntries.reduce((acc, entry) => acc + entry.sleepHours, 0);
     return (sum / wellnessEntries.length).toFixed(1);
   };
@@ -124,10 +108,10 @@ const HealthDashboardScreen = ({ navigation }: any) => {
         <Text style={styles.entryDate}>
           {entry.date.toLocaleDateString()}
         </Text>
-        <View style={styles.entryMood}>
-          {entry.mood === 1 ? '😢' : entry.mood === 2 ? '😔' : 
+        <Text style={styles.entryMood}>
+          {entry.mood === 1 ? '😢' : entry.mood === 2 ? '😔' :
            entry.mood === 3 ? '😐' : entry.mood === 4 ? '😊' : '😄'}
-        </View>
+        </Text>
       </View>
       <View style={styles.entryStats}>
         <View style={styles.statItem}>
@@ -173,6 +157,14 @@ const HealthDashboardScreen = ({ navigation }: any) => {
     </TouchableOpacity>
   );
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2196F3" />
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       <View style={styles.header}>
@@ -180,10 +172,19 @@ const HealthDashboardScreen = ({ navigation }: any) => {
         <TouchableOpacity
           style={styles.refreshButton}
           onPress={fetchHealthData}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh health data"
         >
           <Ionicons name="refresh" size={24} color="#2196F3" />
         </TouchableOpacity>
       </View>
+
+      {errorMessage && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle" size={18} color="#F44336" />
+          <Text style={styles.errorBannerText}>{errorMessage}</Text>
+        </View>
+      )}
 
       <View style={styles.content}>
         {/* Health Score */}
@@ -292,6 +293,25 @@ const HealthDashboardScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  errorBannerText: {
+    color: '#C62828',
+    fontSize: 14,
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',

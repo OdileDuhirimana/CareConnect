@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,39 +6,37 @@ import {
   TouchableOpacity,
   StyleSheet,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { StackScreenProps } from '@react-navigation/stack';
 import { Pharmacy } from '../../types';
+import { fetchPartnerPharmacies, ServiceError } from '../../services';
+import { RootStackParamList } from '../../navigation/types';
 
-const PharmacyScreen = ({ navigation }: any) => {
+type Props = StackScreenProps<RootStackParamList, 'Pharmacy'>;
+
+const PharmacyScreen = ({ navigation }: Props) => {
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchPharmacies();
-  }, []);
-
-  const fetchPharmacies = async () => {
+  const fetchPharmacies = useCallback(async () => {
+    setErrorMessage(null);
     try {
-      const pharmaciesRef = collection(db, 'pharmacies');
-      const q = query(pharmaciesRef, where('isPartner', '==', true));
-      
-      const querySnapshot = await getDocs(q);
-      const pharmaciesData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Pharmacy[];
-      
+      const pharmaciesData = await fetchPartnerPharmacies();
       setPharmacies(pharmaciesData);
     } catch (error) {
-      console.error('Error fetching pharmacies:', error);
+      setErrorMessage(error instanceof ServiceError ? error.message : 'Failed to load pharmacies.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchPharmacies();
+  }, [fetchPharmacies]);
 
   const getFilteredPharmacies = () => {
     if (!searchQuery.trim()) return pharmacies;
@@ -96,18 +94,35 @@ const PharmacyScreen = ({ navigation }: any) => {
     </TouchableOpacity>
   );
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2196F3" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#2196F3" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Partner Pharmacies</Text>
         <View style={styles.placeholder} />
       </View>
+
+      {errorMessage && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle" size={18} color="#F44336" />
+          <Text style={styles.errorBannerText}>{errorMessage}</Text>
+        </View>
+      )}
 
       <View style={styles.searchContainer}>
         <View style={styles.searchInputContainer}>
@@ -144,6 +159,25 @@ const PharmacyScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  errorBannerText: {
+    color: '#C62828',
+    fontSize: 14,
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',
