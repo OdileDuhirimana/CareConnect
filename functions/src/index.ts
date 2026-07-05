@@ -13,6 +13,12 @@ import * as logger from "firebase-functions/logger";
 import express from "express";
 import cors from "cors";
 
+export {approveDoctorRequest, deleteUserAccount} from "./adminApproval";
+export {createAppointment} from "./appointments";
+export {createWellnessEntry} from "./wellness";
+export {sendMessage} from "./messages";
+export {syncUserClaims} from "./customClaims";
+
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
 
@@ -26,7 +32,7 @@ import cors from "cors";
 // functions should each use functions.runWith({ maxInstances: 10 }) instead.
 // In the v1 API, each function can only serve one request per container, so
 // this will be the maximum concurrent request count.
-setGlobalOptions({ maxInstances: 10 });
+setGlobalOptions({maxInstances: 10});
 
 const app = express();
 
@@ -52,6 +58,11 @@ app.get("/docs", (_req, res) => {
   });
 });
 
+// Express only recognizes this as error-handling middleware because it
+// declares all four parameters (err, req, res, next) — `_next` must stay
+// even though it's unused, or Express will treat this as a normal
+// request handler and never invoke it on errors.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   logger.error("Unhandled function error", err);
   res.status(500).json({error: "Internal server error"});
